@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Truck Park Management</string>
+
+    <string name="nav_home">Home</string>
+    <string name="nav_visits">Visits</string>
+    <string name="nav_registers">Registers</string>
+    <string name="nav_reports">Reports</string>
+    <string name="nav_more">More</string>
+
+    <string name="status_not_implemented">Not implemented yet</string>
+    <string name="planned_in_milestone">Planned in %1$s</string>
+
+    <string name="home_summary">Role-based dashboards for Admin, Supervisor and Runner will appear here.</string>
+    <string name="home_milestone">Milestones 2 and 10</string>
+    <string name="visits_summary">Truck arrivals, departures, duplicate-open-visit warnings and visit history.</string>
+    <string name="visits_milestone">Milestone 3</string>
+    <string name="registers_summary">Vehicle, driver, cargo, seal and visitor registers.</string>
+    <string name="registers_milestone">Milestones 3, 5 and 6</string>
+    <string name="reports_summary">Company-branded PDF reports with offline-data warnings.</string>
+    <string name="reports_milestone">Milestone 11</string>
+
+    <string name="more_title">More</string>
+    <string name="appearance_title">Appearance</string>
+    <string name="appearance_description">Choose how Truck Park Management looks. Your choice is saved on this device.</string>
+    <string name="appearance_system">System default</string>
+    <string name="appearance_system_detail">Follow Android\'s current light or dark setting</string>
+    <string name="appearance_light">Light</string>
+    <string name="appearance_light_detail">Always use the light appearance</string>
+    <string name="appearance_dark">Dark</string>
+    <string name="appearance_dark_detail">Always use the dark appearance</string>
+
+    <string name="about_title">About this build</string>
+    <string name="about_body">Version 0.1.0-m1. Milestone 1 foundation only: navigation and appearance settings. There is no sign-in, no database and no synchronization yet.</string>
+
+    <string name="status_label_format">Status: %1$s</string>
+</resources>
