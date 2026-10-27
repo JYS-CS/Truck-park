@@ -10,6 +10,9 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.truckpark.management.core.common.resolveDark
 import com.truckpark.management.core.designsystem.theme.TruckParkTheme
@@ -26,13 +29,14 @@ class MainActivity : ComponentActivity() {
         setContent {
             val storedMode by themeViewModel.themeMode.collectAsStateWithLifecycle()
             val mode = storedMode
+
+            var showSplash by rememberSaveable { mutableStateOf(true) }
+
             // Render nothing for the first frame(s) until the saved preference is loaded.
             if (mode != null) {
                 val darkTheme = mode.resolveDark(isSystemInDarkTheme())
 
                 DisposableEffect(darkTheme) {
-                    // Keep status/navigation bar icon contrast correct for the *chosen* theme,
-                    // which may differ from the system theme.
                     enableEdgeToEdge(
                         statusBarStyle = SystemBarStyle.auto(
                             AndroidColor.TRANSPARENT,
@@ -47,10 +51,16 @@ class MainActivity : ComponentActivity() {
                 }
 
                 TruckParkTheme(darkTheme = darkTheme) {
-                    TruckParkAppRoot(
-                        themeMode = mode,
-                        onThemeModeSelected = themeViewModel::select,
-                    )
+                    if (showSplash) {
+                        com.truckpark.management.feature.splash.HibiscusAnimatedSplashScreen(
+                            onSplashFinished = { showSplash = false }
+                        )
+                    } else {
+                        TruckParkAppRoot(
+                            themeMode = mode,
+                            onThemeModeSelected = themeViewModel::select,
+                        )
+                    }
                 }
             }
         }

@@ -1,11 +1,14 @@
 package com.truckpark.management.core.designsystem.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -46,12 +49,24 @@ fun StatusBadge(kind: StatusKind, label: String, modifier: Modifier = Modifier) 
         modifier = modifier
             .clip(RoundedCornerShape(50))
             .background(colors.container)
-            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .border(
+                width = 1.dp,
+                color = colors.content.copy(alpha = 0.25f),
+                shape = RoundedCornerShape(50),
+            )
+            .padding(horizontal = 10.dp, vertical = 5.dp)
             .semantics(mergeDescendants = true) {},
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(kind.icon, contentDescription = null, tint = colors.content, modifier = Modifier.size(18.dp))
+        // Dot indicator + Icon
+        Box(
+            modifier = Modifier
+                .size(6.dp)
+                .background(colors.content, shape = CircleShape),
+        )
         Spacer(Modifier.width(6.dp))
-        Text(label, color = colors.content, style = MaterialTheme.typography.labelLarge)
+        Icon(kind.icon, contentDescription = null, tint = colors.content, modifier = Modifier.size(14.dp))
+        Spacer(Modifier.width(4.dp))
+        Text(label, color = colors.content, style = MaterialTheme.typography.labelMedium)
     }
 }

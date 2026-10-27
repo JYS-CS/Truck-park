@@ -1,51 +1,167 @@
-# Truck Park Management (Android)
+# 🌺 Hibiscus — Truck Park Management (Android)
 
-Status: **Milestone 1 source written. NOT yet compiled or run by the author.**
+A modern Android application for truck park management, built with **Jetpack Compose**, **Material 3**, and a custom **Liquid Glass Design System**.
 
-## Verification status (read this first)
+---
+
+## ✅ Current Status
 
 | Item | Status |
 |---|---|
-| Source files for Milestone 1 | Written |
-| Gradle sync / compile | **Not done** – the authoring environment had no Android SDK and could not reach Google's Maven repository |
-| Unit tests (`ThemeModeTest`) | Written, **not run** |
-| Run on emulator/device | **Not done** |
-| Gradle wrapper (`gradlew`, `gradle-wrapper.jar`) | **Missing** – could not be generated offline |
-| Dependency versions | Chosen from knowledge, unverified (see `gradle/libs.versions.toml`) |
+| Compiles & builds | ✅ Verified (`./gradlew testDebugUnitTest` passes) |
+| Unit tests | ✅ Passing |
+| Runs on device/emulator | ✅ Working |
+| Branding & Identity | ✅ Official **Hibiscus** emblem, wordmark & icons |
+| Splash Screen | ✅ Dynamic animated liquid glass splash with shimmer |
+| Theming (Light / Dark / System) | ✅ Implemented & persisted |
+| Navigation | ✅ Liquid Glass bottom bar with animated bubble |
+| Responsiveness | ✅ All screen sizes, orientations, nav types |
 
-Expect to fix small compile errors on first sync. Nothing here should be treated as tested.
+---
 
-## Open in Android Studio
+## 🏗️ Architecture
 
-1. Install a recent Android Studio (needs JDK 17+, Android SDK Platform 35).
-2. File > Open > select this `TruckParkManagement` folder.
-3. When prompted, let Studio create/upgrade the Gradle wrapper (or run `gradle wrapper --gradle-version 8.10.2` in this folder; AGP 8.7.x needs Gradle 8.9+).
-4. Sync, then run the `app` configuration on an emulator (API 26+).
-5. Unit tests: `./gradlew :app:testDebugUnitTest`.
+```
+app/
+└── src/main/java/com/truckpark/management/
+    ├── core/
+    │   ├── common/           # Shared utilities
+    │   ├── designsystem/
+    │   │   ├── components/   # GlassCard, LiquidGlassNavigationBar, ...
+    │   │   ├── icons/        # Custom hand-drawn icon set (TruckParkIcons.kt)
+    │   │   └── theme/        # ColorScheme, Typography, Theme.kt
+    │   └── datastore/        # ThemeMode persistence via DataStore
+    ├── data/
+    │   ├── local/            # Room DB stubs
+    │   └── repositories/     # Data repository impls
+    ├── domain/
+    │   └── repositories/     # Domain repository interfaces
+    ├── feature/
+    │   ├── home/             # Home screen
+    │   ├── visits/           # Visits screen
+    │   ├── registers/        # Registers screen
+    │   ├── reports/          # Reports screen
+    │   ├── settings/         # More / Settings screen (MoreScreen.kt)
+    │   ├── splash/           # HibiscusAnimatedSplashScreen.kt
+    │   └── placeholder/      # PlannedFeatureScreen with brand header
+    └── navigation/
+        ├── TruckParkAppRoot.kt    # Root composable, safe drawing, bottom insets
+        ├── TruckParkNavGraph.kt   # NavHost + routes
+        └── TopLevelDestination.kt # Bottom nav enum (Home, Visits, Registers, Reports)
+```
 
-## Milestone 1 scope
+**Stack:** Kotlin · Jetpack Compose · Material 3 · DataStore · Hilt (DI) · Navigation Compose · Gradle Version Catalog
 
-Implemented (in source, untested):
-- Gradle/Kotlin/Compose project, minSdk 26, targetSdk 35, `allowBackup=false`.
-- Layered package layout: `app`, `core/common`, `core/designsystem`, `data/local`, `data/repositories`, `domain/repositories`, `feature/*`, `navigation`.
-- Light / Dark / System Default appearance, saved with DataStore and restored on restart. The theme is applied in composition only, so switching does not recreate the activity or discard `rememberSaveable` form state.
-- Full light and dark `ColorScheme`s plus extra colours for glass surfaces and status badges (success, info, warning, critical, neutral, offline).
-- Liquid-glass-style card built from layers (translucent fill, diagonal specular sheen, bottom accent glow, gradient rim) over a backdrop with soft cyan/indigo light pools. **No real backdrop blur or refraction yet.** Status badge uses colour + icon + text.
-- Custom hand-drawn icon set (`core/designsystem/icons/TruckParkIcons.kt`): thin geometric outlines, one stroke weight, one accent dot. The Material icons dependency was removed.
-- Visual quality has **not been seen on a screen** by the author; expect to tune spacing, glow strength and icon proportions after the first run.
+---
 
-Optional upgrade after the project builds: real backdrop blur via a library such as Haze (its current API could not be confirmed offline, so it was not added blind).
-- Five-section adaptive navigation (Home, Visits, Registers, Reports, More): bottom bar on phones, rail on wider windows.
-- Appearance picker in **More**.
+## 🎨 Design System & Branding
 
-Placeholders (explicitly marked "Not implemented yet" in the UI): Home, Visits, Registers, Reports.
+### Hibiscus Brand Identity
+- **App Icon**: Dedicated pure "H" Highway Ribbon Emblem centered inside the 66% safe zone with radial edge-feathering, blending seamlessly into the obsidian-navy `#05071E` background without square or boundary clipping. Full mipmaps generated (`mdpi` through `xxxhdpi`).
+- **Animated Splash Screen (`HibiscusAnimatedSplashScreen.kt`)**:
+  - Ambient radial pulse breathing in brand cyan (`#00F5FF`), indigo (`#4938FF`), and magenta (`#C500FF`).
+  - Elastic scale-bloom entrance for the glossy "H" emblem.
+  - Smooth upward glide and reveal for the "HIBISCUSS" wordmark.
+  - Specular shimmer light-beam sweep and expanding luminous cyan underline.
+  - Tagline `"TRUCK PARK MANAGEMENT"` with clean tracking.
+  - Clean solid-color window background (`#0B0F19`) preventing duplicate logos or screen flashes.
+- **Header**: Top of all main screens displays **Hibiscus** in the vibrant 4-color brand gradient with subtitle `"Truck Park"`.
 
-Not started: everything in milestones 2–14 (authentication, roles, visits, Room database, sync protocol, registers, visitors, incidents, inspections, attendance, handovers, alerts, dashboards, search, PDF reports, archiving, backup, security testing, deployment docs). There is no backend yet and none has been selected.
+### Liquid Glass UI
+A custom design language inspired by glassmorphism:
+- **GlassCard** — Layered translucent surfaces with diagonal specular sheen, bottom accent glow, gradient rim, and soft cyan/indigo light pools beneath.
+- **LiquidGlassNavigationBar** — Floating capsule bottom navigation bar with a physics-driven liquid bubble indicator that glides smoothly between tabs.
 
-## Still to do for Milestone 1 sign-off
+### Theming
+Three modes selectable in-app and persisted across restarts:
 
-- Compile and run; fix any errors.
-- Verify contrast of both palettes (e.g. with the Accessibility Scanner and TalkBack).
-- Manual check: switch themes mid-form and confirm input is kept; kill and relaunch to confirm persistence.
-- Add the app icon and a splash/window background that matches the chosen theme (a brief mismatch is possible on first frame when forcing Light on a dark system).
-- Decide whether to add a real backdrop-blur library behind an API-level check.
+| Mode | Description |
+|---|---|
+| 🌙 **Dark** | Deep navy surfaces, vivid accent glows |
+| ☀️ **Light** | Bright whites, warm sunrise amber accents |
+| ⚙️ **System** | Follows OS light/dark preference |
+
+Theme is applied in composition only — switching does **not** recreate the Activity or discard form state.
+
+### Custom Icon Set (`TruckParkIcons.kt`)
+Hand-drawn, geometric thin-outline icons with a single accent dot. Multi-tone SVG layers with glass badge details. Material icons dependency removed entirely.
+
+Includes custom theme picker icons:
+- `ThemeSystem` — gradient globe with system badge
+- `ThemeLight` — warm sunrise amber/orange sun
+- `ThemeDark` — indigo crescent moon
+
+---
+
+## 🧭 Navigation
+
+### Bottom Navigation Bar — Liquid Glass
+A floating capsule bar rendered at the bottom of the screen:
+
+- **4 top-level destinations:** Home · Visits · Registers · Reports
+- **Liquid bubble indicator** that glides across tabs with a step-by-step animation:
+  - Each intermediate tab is swept through in **90ms** (visibly passing, never appearing to settle)
+  - Final destination gets a **220ms ease-out** smooth landing
+  - Example: Home → Reports = 90ms + 90ms + 220ms = natural fluid glide through all tabs
+- Proximity-based icon colour glow and scale as the bubble passes each tab
+- **More** (5th item) opens a bottom sheet instead of navigating
+
+### Responsiveness
+Fully responsive across:
+- **Phone portrait & landscape**
+- **Tablet / foldable wide windows**
+- **All system navigation types:** gesture navigation, 2-button, 3-button
+- Uses `.safeDrawingPadding()` + dynamic WindowInsets bottom padding to never overlap system bars or nav buttons
+- Nav bar and feature screens constrained with `widthIn(max = 560.dp / 680.dp)` for comfortable wide-screen layouts
+
+---
+
+## ⚙️ More / Settings Screen
+
+Accessible via the hamburger / "More" tab at the bottom:
+
+- **Appearance selector** — three polished theme cards with animated multi-tone SVG icons, active selection glow/border, and smooth state transitions
+- Clean bottom sheet with full opacity surface and proper contrast typography
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+- Android Studio Hedgehog or newer
+- JDK 17+
+- Android SDK Platform 35
+
+### Run
+```bash
+# Sync & build
+./gradlew assembleDebug
+
+# Unit tests
+./gradlew testDebugUnitTest
+
+# Install on connected device/emulator
+./gradlew installDebug
+```
+
+---
+
+## 🗺️ Roadmap
+
+### ✅ Milestone 1 — Foundation (Complete)
+- [x] Project setup (minSdk 26, targetSdk 35)
+- [x] Design system: Liquid Glass cards, colours, typography
+- [x] Custom icon set (no Material icons dependency)
+- [x] Light / Dark / System theming with DataStore persistence
+- [x] Bottom navigation with animated liquid bubble glide
+- [x] Fully responsive layout (all orientations, all nav types)
+- [x] More / Settings screen with appearance picker
+- [x] Adaptive app icon & dark theme-matching splash screen
+
+---
+
+## 📝 Notes
+
+- No real backdrop blur yet — surfaces simulate depth with layered gradients and alpha. A library like [Haze](https://github.com/chrisbanes/haze) can be added once API compatibility is confirmed.
+- Backend not yet selected or started.
+

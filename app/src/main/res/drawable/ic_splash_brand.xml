@@ -1,0 +1,132 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="160dp"
+    android:height="160dp"
+    android:viewportWidth="160"
+    android:viewportHeight="160">
+
+    <!-- Ambient backdrop glow -->
+    <path
+        android:pathData="M80,80m-55,0a55,55 0,1 1,110 0a55,55 0,1 1,-110 0">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:centerX="80"
+                android:centerY="80"
+                android:gradientRadius="55"
+                android:type="radial">
+                <item android:color="#3538BDF8" android:offset="0.0" />
+                <item android:color="#006366F1" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Liquid Glass Shield Badge -->
+    <path
+        android:pathData="M80,30 C100,30 120,38 120,62 C120,100 92,124 80,130 C68,124 40,100 40,62 C40,38 60,30 80,30 Z"
+        android:strokeWidth="2.5"
+        android:strokeColor="#5038BDF8">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:angle="315"
+                android:endColor="#151E293B"
+                android:startColor="#2538BDF8"
+                android:type="linear" />
+        </aapt:attr>
+    </path>
+
+    <!-- Truck Cargo Body (Emerald glass gradient) -->
+    <path
+        android:pathData="M55,62 L90,62 C92,62 93.5,63.5 93.5,65.5 L93.5,88 L52,88 L52,65.5 C52,63.5 53.5,62 55,62 Z"
+        android:strokeWidth="2.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeColor="#34D399">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:angle="270"
+                android:endColor="#30059669"
+                android:startColor="#5010B981"
+                android:type="linear" />
+        </aapt:attr>
+    </path>
+
+    <!-- Rib Lines -->
+    <path
+        android:pathData="M65,68 L65,82 M78,68 L78,82"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeColor="#4034D399" />
+
+    <!-- Truck Cab -->
+    <path
+        android:pathData="M93.5,69 L103,69 C104.5,69 106,70 106.8,71.2 L111,78 C111.8,79.2 112,80.5 112,82 L112,88 L93.5,88 Z"
+        android:strokeWidth="2.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeColor="#38BDF8">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:angle="270"
+                android:endColor="#300284C7"
+                android:startColor="#5538BDF8"
+                android:type="linear" />
+        </aapt:attr>
+    </path>
+
+    <!-- Windshield -->
+    <path
+        android:pathData="M96.5,72 L102,72 L106.5,78 L96.5,78 Z"
+        android:strokeWidth="1.5"
+        android:strokeColor="#7DD3FC"
+        android:fillColor="#8038BDF8" />
+
+    <!-- Chassis Beam -->
+    <path
+        android:pathData="M48,88 L115,88"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:strokeColor="#818CF8" />
+
+    <!-- Left Wheel -->
+    <path
+        android:pathData="M62,88 A5.5,5.5 0 1,1 62,99 A5.5,5.5 0 1,1 62,88"
+        android:strokeWidth="2.6"
+        android:strokeColor="#38BDF8"
+        android:fillColor="#0B0F19" />
+    <path
+        android:pathData="M62,93.5 L62.01,93.5"
+        android:strokeWidth="3.2"
+        android:strokeLineCap="round"
+        android:strokeColor="#38BDF8" />
+
+    <!-- Middle Wheel -->
+    <path
+        android:pathData="M76,88 A5.5,5.5 0 1,1 76,99 A5.5,5.5 0 1,1 76,88"
+        android:strokeWidth="2.6"
+        android:strokeColor="#38BDF8"
+        android:fillColor="#0B0F19" />
+    <path
+        android:pathData="M76,93.5 L76.01,93.5"
+        android:strokeWidth="3.2"
+        android:strokeLineCap="round"
+        android:strokeColor="#38BDF8" />
+
+    <!-- Front Cab Wheel -->
+    <path
+        android:pathData="M103,88 A5.5,5.5 0 1,1 103,99 A5.5,5.5 0 1,1 103,88"
+        android:strokeWidth="2.6"
+        android:strokeColor="#38BDF8"
+        android:fillColor="#0B0F19" />
+    <path
+        android:pathData="M103,93.5 L103.01,93.5"
+        android:strokeWidth="3.2"
+        android:strokeLineCap="round"
+        android:strokeColor="#38BDF8" />
+
+    <!-- Accent Specular Node Dot -->
+    <path
+        android:pathData="M80,38 L80.01,38"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:strokeColor="#38BDF8" />
+</vector>
