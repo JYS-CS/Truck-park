@@ -43,6 +43,10 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -261,11 +265,15 @@ fun LiquidGlassNavigationBar(
                         val unselectedTextColor = if (dark) Color(0xFF94A3B8) else Color(0xFF64748B)
                         val textColor = androidx.compose.ui.graphics.lerp(unselectedTextColor, baseColor, proximity)
 
-                        val vectorIcon = when (destination) {
-                            TopLevelDestination.Home -> TruckParkIcons.buildHomeIcon(baseColor, proximity > 0.5f)
-                            TopLevelDestination.Visits -> TruckParkIcons.buildTruckIcon(baseColor, proximity > 0.5f)
-                            TopLevelDestination.Registers -> TruckParkIcons.buildRegistersIcon(baseColor, proximity > 0.5f)
-                            TopLevelDestination.Reports -> TruckParkIcons.buildReportsIcon(baseColor, proximity > 0.5f)
+                        val isActive = proximity > 0.5f
+                        // Build each icon once per colour/state change, not on every frame of the glide.
+                        val vectorIcon = remember(destination, baseColor, isActive) {
+                            when (destination) {
+                                TopLevelDestination.Home -> TruckParkIcons.buildHomeIcon(baseColor, isActive)
+                                TopLevelDestination.Visits -> TruckParkIcons.buildTruckIcon(baseColor, isActive)
+                                TopLevelDestination.Registers -> TruckParkIcons.buildRegistersIcon(baseColor, isActive)
+                                TopLevelDestination.Reports -> TruckParkIcons.buildReportsIcon(baseColor, isActive)
+                            }
                         }
 
                         Column(
@@ -273,6 +281,11 @@ fun LiquidGlassNavigationBar(
                                 .width(tabWidth)
                                 .fillMaxHeight()
                                 .clip(IndicatorShape)
+                                // One merged node per tab, so a screen reader reads the label once.
+                                .semantics(mergeDescendants = true) {
+                                    role = Role.Tab
+                                    selected = index == selectedIndex
+                                }
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = null,
@@ -304,7 +317,7 @@ fun LiquidGlassNavigationBar(
 
                                 Icon(
                                     imageVector = vectorIcon,
-                                    contentDescription = stringResource(destination.labelRes),
+                                    contentDescription = null, // label Text below supplies the name
                                     tint = Color.Unspecified, // Preserves the rich SVG multi-colors!
                                     modifier = Modifier
                                         .size(24.dp)

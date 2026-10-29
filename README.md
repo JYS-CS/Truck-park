@@ -66,10 +66,10 @@ secondary in light mode, and a slate-based dark scheme.
 
 ## Splash
 
-`HibiscusAnimatedSplashScreen` plays on every cold start (about 3 seconds). It
-has a fixed dark background (`#05071E`) and does not follow the chosen theme.
-The Android window background uses the same colour, so there is no flash
-before the splash draws.
+`HibiscusAnimatedSplashScreen` plays on every cold start (about 3 seconds).
+It follows the chosen theme: dark navy in Dark mode and near-white in Light mode.
+Tapping it skips straight to the app. The Android window background matches
+(dark navy at night, near-white by day).
 
 ## Icons and dependencies
 
@@ -90,14 +90,5 @@ Requires Android Studio with JDK 17+ and Android SDK Platform 35.
 
 ## Known gaps and risks
 
-- **Icon rebuilds:** the tab icons are rebuilt on every frame of the glide,
-  which costs CPU on low-end devices.
-- **Tab accessibility:** each tab's icon and label both announce the tab name,
-  so screen readers repeat it. Tabs have no pressed feedback because the
-  ripple is disabled.
-- **Splash:** it cannot be skipped and ignores touches during its roughly
-  3-second run. It also ignores the light/dark setting.
-- **Hard-coded colours:** the bar and splash use literal colours outside
-  `Color.kt`, so theme changes will not reach them.
 - No real backdrop blur. Glass effects use layered gradients and transparency.
 - Backend not yet chosen.

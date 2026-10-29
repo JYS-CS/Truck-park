@@ -29,6 +29,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -53,8 +56,18 @@ import kotlinx.coroutines.launch
  */
 @Composable
 fun HibiscusAnimatedSplashScreen(
+    darkTheme: Boolean,
     onSplashFinished: () -> Unit,
 ) {
+    // Tap to skip and the normal end both call finish(); only the first call has an effect.
+    val finished = remember { mutableStateOf(false) }
+    val finish: () -> Unit = {
+        if (!finished.value) {
+            finished.value = true
+            onSplashFinished()
+        }
+    }
+
     val emblemScale = remember { Animatable(0.70f) }
     val emblemAlpha = remember { Animatable(0f) }
     val wordmarkAlpha = remember { Animatable(0f) }
@@ -135,14 +148,19 @@ fun HibiscusAnimatedSplashScreen(
             targetValue = 0f,
             animationSpec = tween(400, easing = FastOutSlowInEasing),
         )
-        onSplashFinished()
+        finish()
     }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .alpha(screenAlpha.value)
-            .background(Color(0xFF05071E)), // Exact Hibiscus dark navy background
+            .background(if (darkTheme) Color(0xFF05071E) else Color(0xFFF8FAFC))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = finish,
+            ),
         contentAlignment = Alignment.Center,
     ) {
         // Ambient Liquid Cyan / Electric Indigo radial glow pool behind emblem
@@ -241,7 +259,7 @@ fun HibiscusAnimatedSplashScreen(
             // Subtitle Tagline
             Text(
                 text = "TRUCK PARK MANAGEMENT",
-                color = Color(0xFFA9C8FF).copy(alpha = subtitleAlpha.value),
+                color = (if (darkTheme) Color(0xFFA9C8FF) else Color(0xFF1E3A8A)).copy(alpha = subtitleAlpha.value),
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,
                 letterSpacing = 3.5.sp,
