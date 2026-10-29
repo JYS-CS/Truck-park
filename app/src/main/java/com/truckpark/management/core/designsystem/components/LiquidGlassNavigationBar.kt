@@ -28,7 +28,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import kotlinx.coroutines.launch
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -77,7 +76,6 @@ fun LiquidGlassNavigationBar(
 
     // HOISTED ANIMATABLE: Lives across all layout passes and recompositions so it never resets or skips
     val animIndex = remember { androidx.compose.animation.core.Animatable(selectedIndex.toFloat()) }
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
 
     // Step-by-step glide: quick visible pass-through intermediate tabs, smooth landing at destination
     suspend fun liquidGlideTo(target: Float) {
@@ -279,10 +277,8 @@ fun LiquidGlassNavigationBar(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = null,
                                 ) {
-                                    val target = index.toFloat()
-                                    scope.launch {
-                                        liquidGlideTo(target)
-                                    }
+                                    // The indicator glide is started by the selection effect above,
+                                    // so the tap only reports the choice.
                                     onDestinationSelected(destination)
                                 },
                             horizontalAlignment = Alignment.CenterHorizontally,
