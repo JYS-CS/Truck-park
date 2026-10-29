@@ -53,6 +53,7 @@ class MainActivity : ComponentActivity() {
                 TruckParkTheme(darkTheme = darkTheme) {
                     if (showSplash) {
                         com.truckpark.management.feature.splash.HibiscusAnimatedSplashScreen(
+                            darkTheme = darkTheme,
                             onSplashFinished = { showSplash = false }
                         )
                     } else {
