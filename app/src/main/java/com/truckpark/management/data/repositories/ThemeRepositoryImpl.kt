@@ -9,5 +9,7 @@ class ThemeRepositoryImpl(
     private val dataSource: ThemePreferencesDataSource,
 ) : ThemeRepository {
     override val themeMode: Flow<ThemeMode> = dataSource.themeMode
+    override fun getInitialThemeMode(): ThemeMode = dataSource.getInitialThemeMode()
     override suspend fun setThemeMode(mode: ThemeMode) = dataSource.setThemeMode(mode)
+    override fun applySystemNightMode() = dataSource.applySystemNightMode()
 }

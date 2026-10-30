@@ -5,5 +5,7 @@ import kotlinx.coroutines.flow.Flow
 
 interface ThemeRepository {
     val themeMode: Flow<ThemeMode>
+    fun getInitialThemeMode(): ThemeMode
     suspend fun setThemeMode(mode: ThemeMode)
+    fun applySystemNightMode()
 }

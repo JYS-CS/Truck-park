@@ -163,25 +163,27 @@ fun HibiscusAnimatedSplashScreen(
             ),
         contentAlignment = Alignment.Center,
     ) {
-        // Ambient Liquid Cyan / Electric Indigo radial glow pool behind emblem
-        Box(
-            modifier = Modifier
-                .size(360.dp)
-                .scale(emblemScale.value)
-                .alpha(glowPulse.value)
-                .background(
-                    brush = Brush.radialGradient(
-                        colors = listOf(
-                            Color(0xFF00F5FF).copy(alpha = 0.40f),
-                            Color(0xFF26BFFF).copy(alpha = 0.25f),
-                            Color(0xFF4938FF).copy(alpha = 0.15f),
-                            Color(0xFFC500FF).copy(alpha = 0.08f),
-                            Color.Transparent,
+        // Ambient Liquid Cyan / Electric Indigo radial glow pool behind emblem (in dark theme)
+        if (darkTheme) {
+            Box(
+                modifier = Modifier
+                    .size(360.dp)
+                    .scale(emblemScale.value)
+                    .alpha(glowPulse.value)
+                    .background(
+                        brush = Brush.radialGradient(
+                            colors = listOf(
+                                Color(0xFF00F5FF).copy(alpha = 0.40f),
+                                Color(0xFF26BFFF).copy(alpha = 0.25f),
+                                Color(0xFF4938FF).copy(alpha = 0.15f),
+                                Color(0xFFC500FF).copy(alpha = 0.08f),
+                                Color.Transparent,
+                            ),
                         ),
+                        shape = CircleShape,
                     ),
-                    shape = CircleShape,
-                ),
-        )
+            )
+        }
 
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -211,7 +213,9 @@ fun HibiscusAnimatedSplashScreen(
                     .alpha(wordmarkAlpha.value),
             ) {
                 Image(
-                    painter = painterResource(id = R.drawable.hibiscus_wordmark_trans),
+                    painter = painterResource(
+                        id = if (darkTheme) R.drawable.hibiscus_wordmark_trans else R.drawable.hibiscus_wordmark_light
+                    ),
                     contentDescription = "HIBISCUSS",
                     modifier = Modifier.fillMaxSize(),
                 )

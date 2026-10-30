@@ -17,10 +17,9 @@ import kotlinx.coroutines.launch
 
 class ThemeViewModel(private val repository: ThemeRepository) : ViewModel() {
 
-    /** null until the stored preference has been read, so the UI never flashes the wrong theme. */
     val themeMode: StateFlow<ThemeMode?> = repository.themeMode
         .map<ThemeMode, ThemeMode?> { it }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, repository.getInitialThemeMode())
 
     fun select(mode: ThemeMode) {
         viewModelScope.launch { repository.setThemeMode(mode) }

@@ -4,6 +4,22 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+import java.util.Properties
+
+val envProperties = Properties().apply {
+    val envFile = rootProject.file(".env")
+    val localPropFile = rootProject.file("local.properties")
+    if (envFile.exists()) {
+        envFile.reader().use { load(it) }
+    } else if (localPropFile.exists()) {
+        localPropFile.reader().use { load(it) }
+    }
+}
+
+val ordsBaseUrl: String = envProperties.getProperty("ORDS_BASE_URL")
+    ?: envProperties.getProperty("ords.base.url")
+    ?: "https://gf339ddde581301-hibiscusstruckpark.adb.af-johannesburg-1.oraclecloudapps.com/ords/"
+
 android {
     namespace = "com.truckpark.management"
     compileSdk = 35
@@ -14,6 +30,8 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0-m1"
+
+        buildConfigField("String", "ORDS_BASE_URL", "\"$ordsBaseUrl\"")
     }
 
     buildTypes {
@@ -32,6 +50,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -52,4 +71,6 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     testImplementation(libs.junit)
+    testImplementation(libs.org.json)
+    testImplementation(libs.kotlinx.coroutines.core)
 }
