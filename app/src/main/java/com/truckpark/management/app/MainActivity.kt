@@ -90,7 +90,6 @@ class MainActivity : ComponentActivity() {
                                 initialPasswordChanged = state.passwordChanged,
                                 initialEmailVerified = state.emailVerified,
                                 onSetupComplete = { authViewModel.completeSecuritySetup() },
-                                onSignOut = { authViewModel.signOut() },
                                 viewModel = authViewModel,
                             )
                         }

@@ -99,7 +99,6 @@ fun AdminSecuritySetupScreen(
     initialPasswordChanged: Boolean = false,
     initialEmailVerified: Boolean = false,
     onSetupComplete: () -> Unit,
-    onSignOut: () -> Unit,
     viewModel: AuthViewModel = androidx.lifecycle.viewmodel.compose.viewModel(factory = AuthViewModel.Factory),
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -546,22 +545,6 @@ fun AdminSecuritySetupScreen(
                         }
                     }
                 }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Sign Out Link
-                Text(
-                    text = "Sign Out & Switch Account",
-                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                    color = if (dark) Color(0xFF94A3B8) else Color(0xFF64748B),
-                    modifier = Modifier
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            onClick = onSignOut,
-                        )
-                        .padding(8.dp),
-                )
 
                 Spacer(modifier = Modifier.height(24.dp))
             }
