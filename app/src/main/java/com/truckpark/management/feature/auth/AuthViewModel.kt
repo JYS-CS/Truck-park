@@ -101,15 +101,21 @@ class AuthViewModel(
 
     fun changePassword(
         currentPassword: String,
+        newEmail: String,
         newPassword: String,
         onComplete: (AuthResult<Unit>) -> Unit,
     ) {
         viewModelScope.launch {
-            val result = authRepository.changePassword(currentPassword, newPassword)
+            val result = authRepository.changePassword(currentPassword, newEmail, newPassword)
             if (result is AuthResult.Success) {
                 val current = _uiState.value
                 if (current is AuthUiState.AdminSecuritySetup) {
-                    _uiState.value = current.copy(passwordChanged = true)
+                    // The new email is unverified until its code is confirmed.
+                    _uiState.value = current.copy(
+                        user = current.user.copy(email = newEmail.trim().lowercase(), emailVerified = false),
+                        passwordChanged = true,
+                        emailVerified = false,
+                    )
                 }
             }
             onComplete(result)

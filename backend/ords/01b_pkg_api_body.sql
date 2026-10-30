@@ -380,6 +380,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
   PROCEDURE change_password(
     p_authorization IN VARCHAR2,
     p_current_password IN VARCHAR2,
+    p_new_email IN VARCHAR2,
     p_new_password IN VARCHAR2,
     p_status OUT NUMBER, p_body OUT CLOB
   ) IS
@@ -390,6 +391,8 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     v_calc_hash  VARCHAR2(255);
     v_new_salt   RAW(16);
     v_new_hash   VARCHAR2(255);
+    v_new_email  VARCHAR2(320);
+    v_taken      NUMBER;
   BEGIN
     PKG_AUTHZ.validate_session(bearer_token(p_authorization));
     v_user_id := PKG_AUTHZ.get_current_user_id();
@@ -399,6 +402,19 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
 
     IF NOT is_valid_password(p_new_password) THEN
       bad_request('Password needs 8+ characters with uppercase, lowercase, a number and a symbol');
+    END IF;
+
+    -- New email is required: the default address cannot receive codes.
+    v_new_email := LOWER(TRIM(p_new_email));
+    IF NOT is_valid_email(v_new_email) THEN
+      bad_request('Enter a valid email address');
+    END IF;
+
+    SELECT COUNT(*) INTO v_taken
+      FROM users
+     WHERE email = v_new_email AND id <> v_user_id;
+    IF v_taken > 0 THEN
+      bad_request('That email address is already in use');
     END IF;
 
     -- Fetch current stored credentials
@@ -435,6 +451,16 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
            locked_until = NULL,
            updated_at = SYSTIMESTAMP
      WHERE user_id = v_user_id AND provider = 'PASSWORD';
+
+    -- Switch to the admin's own email. It is unverified until the code is confirmed.
+    UPDATE users
+       SET email = v_new_email,
+           email_verified_at = NULL,
+           updated_at = SYSTIMESTAMP
+     WHERE id = v_user_id;
+
+    INSERT INTO audit_events (actor_user_id, action, target_type, target_id, reason)
+    VALUES (v_user_id, 'EMAIL_CHANGED', 'USER', v_user_id, 'Email changed during security setup');
 
     -- Security: increment user's permission_version to invalidate any stale sessions on other devices
     UPDATE users

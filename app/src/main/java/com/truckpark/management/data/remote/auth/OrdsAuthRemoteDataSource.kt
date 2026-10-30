@@ -92,11 +92,13 @@ class OrdsAuthRemoteDataSource(
     override suspend fun changePassword(
         sessionToken: String,
         currentPassword: String,
+        newEmail: String,
         newPassword: String,
     ): AuthResult<Unit> = call(
         path = "auth/change-password",
         body = JSONObject()
             .put("current_password", currentPassword)
+            .put("new_email", newEmail)
             .put("new_password", newPassword),
         bearer = sessionToken,
     ) { }

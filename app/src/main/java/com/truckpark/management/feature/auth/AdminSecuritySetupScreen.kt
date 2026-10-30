@@ -111,7 +111,7 @@ fun AdminSecuritySetupScreen(
     // Password change fields
     var currentPassword by remember { mutableStateOf("") }
     var newPassword by remember { mutableStateOf("") }
-    var confirmPassword by remember { mutableStateOf("") }
+    var newEmail by remember { mutableStateOf("") }
     var isChangingPassword by remember { mutableStateOf(false) }
     var passwordError by remember { mutableStateOf<String?>(null) }
     var passwordSuccess by remember { mutableStateOf<String?>(null) }
@@ -207,7 +207,7 @@ fun AdminSecuritySetupScreen(
                 // STEP 1: CHANGE INITIAL PASSWORD
                 SecuritySectionCard(
                     title = "1. Update Administrator Password",
-                    subtitle = if (passwordChanged) "Secure administrator password configured" else "Change initial password to a strong secret",
+                    subtitle = if (passwordChanged) "Secure administrator password configured" else "Enter your current password, your own email and a new password",
                     isComplete = passwordChanged,
                     dark = dark,
                 ) {
@@ -232,6 +232,18 @@ fun AdminSecuritySetupScreen(
                             )
 
                             SetupInputField(
+                                value = newEmail,
+                                onValueChange = {
+                                    newEmail = it
+                                    passwordError = null
+                                },
+                                placeholder = "Your email address (not the default)",
+                                icon = Icons.Default.Email,
+                                keyboardType = KeyboardType.Email,
+                                dark = dark,
+                            )
+
+                            SetupInputField(
                                 value = newPassword,
                                 onValueChange = {
                                     newPassword = it
@@ -249,18 +261,6 @@ fun AdminSecuritySetupScreen(
                                 dark = dark,
                             )
 
-                            SetupInputField(
-                                value = confirmPassword,
-                                onValueChange = {
-                                    confirmPassword = it
-                                    passwordError = null
-                                },
-                                placeholder = "Confirm new password",
-                                icon = Icons.Default.Lock,
-                                isPassword = true,
-                                dark = dark,
-                            )
-
                             if (passwordError != null) {
                                 ErrorMessageBanner(message = passwordError!!, dark = dark)
                             }
@@ -270,19 +270,21 @@ fun AdminSecuritySetupScreen(
                             }
 
                             val allRulesSatisfied = REQUIREMENTS.all { it.isSatisfied(newPassword) }
+                            val emailLooksValid = android.util.Patterns.EMAIL_ADDRESS
+                                .matcher(newEmail.trim()).matches()
                             val canSubmitPassword = currentPassword.isNotBlank() &&
+                                emailLooksValid &&
                                 allRulesSatisfied &&
-                                newPassword == confirmPassword &&
                                 !isChangingPassword
 
                             SetupActionButton(
-                                text = "Update Password",
+                                text = "Next",
                                 isEnabled = canSubmitPassword,
                                 isLoading = isChangingPassword,
                                 dark = dark,
                                 onClick = {
-                                    if (newPassword != confirmPassword) {
-                                        passwordError = "Passwords do not match"
+                                    if (!emailLooksValid) {
+                                        passwordError = "Enter a valid email address"
                                         return@SetupActionButton
                                     }
                                     if (!allRulesSatisfied) {
@@ -293,13 +295,28 @@ fun AdminSecuritySetupScreen(
                                     passwordError = null
                                     viewModel.changePassword(
                                         currentPassword = currentPassword,
+                                        newEmail = newEmail.trim(),
                                         newPassword = newPassword,
                                     ) { result ->
                                         isChangingPassword = false
                                         when (result) {
                                             is AuthResult.Success -> {
                                                 passwordChanged = true
-                                                passwordSuccess = "Password successfully updated!"
+                                                emailVerified = false
+                                                passwordSuccess = "Details saved. Next, verify your new email."
+                                                // Send the code straight to the new address, so the next screen is ready.
+                                                viewModel.sendVerificationCode { codeResult ->
+                                                    when (codeResult) {
+                                                        is AuthResult.Success -> {
+                                                            resendCooldown = 60
+                                                            emailSuccess = "Verification code sent to ${newEmail.trim().lowercase()}"
+                                                            debugCodeHint = codeResult.value
+                                                        }
+                                                        is AuthResult.Failure -> {
+                                                            emailError = codeResult.error.message
+                                                        }
+                                                    }
+                                                }
                                             }
                                             is AuthResult.Failure -> {
                                                 passwordError = result.error.message
