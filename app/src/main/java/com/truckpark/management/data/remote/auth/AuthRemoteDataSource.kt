@@ -20,7 +20,6 @@ interface AuthRemoteDataSource {
     suspend fun sendVerificationCode(sessionToken: String): AuthResult<String?>
     suspend fun changePassword(
         sessionToken: String,
-        currentPassword: String,
         newEmail: String,
         newPassword: String,
     ): AuthResult<Unit>

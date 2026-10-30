@@ -48,6 +48,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -109,7 +110,8 @@ fun AdminSecuritySetupScreen(
     var emailVerified by remember { mutableStateOf(initialEmailVerified || user.emailVerified) }
 
     // Password change fields
-    var currentPassword by remember { mutableStateOf("") }
+    // false = credentials page, true = email verification page (separate screen)
+    var onVerifyPage by rememberSaveable { mutableStateOf(initialPasswordChanged) }
     var newPassword by remember { mutableStateOf("") }
     var newEmail by remember { mutableStateOf("") }
     var isChangingPassword by remember { mutableStateOf(false) }
@@ -204,10 +206,11 @@ fun AdminSecuritySetupScreen(
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                // STEP 1: CHANGE INITIAL PASSWORD
+                // STEP 1: REPLACE DEFAULT EMAIL AND PASSWORD (its own page)
+                if (!onVerifyPage) {
                 SecuritySectionCard(
-                    title = "1. Update Administrator Password",
-                    subtitle = if (passwordChanged) "Secure administrator password configured" else "Enter your current password, your own email and a new password",
+                    title = "1. Update Administrator Details",
+                    subtitle = if (passwordChanged) "Secure administrator details configured" else "Replace the default email and password",
                     isComplete = passwordChanged,
                     dark = dark,
                 ) {
@@ -219,16 +222,10 @@ fun AdminSecuritySetupScreen(
                         )
                     } else {
                         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                            SetupInputField(
-                                value = currentPassword,
-                                onValueChange = {
-                                    currentPassword = it
-                                    passwordError = null
-                                },
-                                placeholder = "Current password (e.g. @Admin)",
-                                icon = Icons.Default.Lock,
-                                isPassword = true,
-                                dark = dark,
+                            Text(
+                                text = "This account still uses the default email and password. Replace both to continue.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (dark) Color(0xFF94A3B8) else Color(0xFF64748B),
                             )
 
                             SetupInputField(
@@ -272,8 +269,7 @@ fun AdminSecuritySetupScreen(
                             val allRulesSatisfied = REQUIREMENTS.all { it.isSatisfied(newPassword) }
                             val emailLooksValid = android.util.Patterns.EMAIL_ADDRESS
                                 .matcher(newEmail.trim()).matches()
-                            val canSubmitPassword = currentPassword.isNotBlank() &&
-                                emailLooksValid &&
+                            val canSubmitPassword = emailLooksValid &&
                                 allRulesSatisfied &&
                                 !isChangingPassword
 
@@ -294,7 +290,6 @@ fun AdminSecuritySetupScreen(
                                     isChangingPassword = true
                                     passwordError = null
                                     viewModel.changePassword(
-                                        currentPassword = currentPassword,
                                         newEmail = newEmail.trim(),
                                         newPassword = newPassword,
                                     ) { result ->
@@ -303,6 +298,7 @@ fun AdminSecuritySetupScreen(
                                             is AuthResult.Success -> {
                                                 passwordChanged = true
                                                 emailVerified = false
+                                                onVerifyPage = true
                                                 passwordSuccess = "Details saved. Next, verify your new email."
                                                 // Send the code straight to the new address, so the next screen is ready.
                                                 viewModel.sendVerificationCode { codeResult ->
@@ -329,9 +325,10 @@ fun AdminSecuritySetupScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                }
 
-                // STEP 2: VERIFY OFFICIAL EMAIL ADDRESS
+                // STEP 2: VERIFY OFFICIAL EMAIL ADDRESS (its own page)
+                if (onVerifyPage) {
                 SecuritySectionCard(
                     title = "2. Verify Administrator Email",
                     subtitle = if (emailVerified) "Official email verified and active" else "Confirm access to ${user.email}",
@@ -488,6 +485,8 @@ fun AdminSecuritySetupScreen(
                             )
                         }
                     }
+                }
+
                 }
 
                 Spacer(modifier = Modifier.height(28.dp))

@@ -379,7 +379,6 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
 
   PROCEDURE change_password(
     p_authorization IN VARCHAR2,
-    p_current_password IN VARCHAR2,
     p_new_email IN VARCHAR2,
     p_new_password IN VARCHAR2,
     p_status OUT NUMBER, p_body OUT CLOB
@@ -394,10 +393,10 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     v_new_email  VARCHAR2(320);
     v_taken      NUMBER;
   BEGIN
+    -- The signed-in session is the proof of identity for this setup step.
     PKG_AUTHZ.validate_session(bearer_token(p_authorization));
     v_user_id := PKG_AUTHZ.get_current_user_id();
 
-    require_text(p_current_password, 'current_password', 100);
     require_text(p_new_password, 'new_password', 100);
 
     IF NOT is_valid_password(p_new_password) THEN
@@ -428,15 +427,10 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
         bad_request('Account does not have password identity configured');
     END;
 
-    -- Verify current password
-    v_calc_hash := PKG_CRYPTO.hash_password(p_current_password, v_salt, v_iters);
-    IF v_calc_hash != v_hash THEN
-      RAISE_APPLICATION_ERROR(-20011, 'Current password does not match');
-    END IF;
-
-    -- Prevent reusing the exact same password
-    IF p_current_password = p_new_password THEN
-      bad_request('New password must be different from current password');
+    -- Prevent keeping the same password (the default one included)
+    v_calc_hash := PKG_CRYPTO.hash_password(p_new_password, v_salt, v_iters);
+    IF v_calc_hash = v_hash THEN
+      bad_request('New password must be different from the current password');
     END IF;
 
     -- Hash new password with fresh salt

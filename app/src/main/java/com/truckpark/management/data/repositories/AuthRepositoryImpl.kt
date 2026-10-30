@@ -57,8 +57,8 @@ class AuthRepositoryImpl(
     override suspend fun sendVerificationCode(): AuthResult<String?> =
         authorised { token -> remote.sendVerificationCode(token) }
 
-    override suspend fun changePassword(currentPassword: String, newEmail: String, newPassword: String): AuthResult<Unit> =
-        authorised { token -> remote.changePassword(token, currentPassword, newEmail.trim().lowercase(), newPassword) }
+    override suspend fun changePassword(newEmail: String, newPassword: String): AuthResult<Unit> =
+        authorised { token -> remote.changePassword(token, newEmail.trim().lowercase(), newPassword) }
 
     // ------------------------------------------------------------------ internals
 

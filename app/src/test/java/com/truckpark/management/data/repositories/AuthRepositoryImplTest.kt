@@ -78,7 +78,6 @@ private class FakeRemote : AuthRemoteDataSource {
 
     override suspend fun changePassword(
         sessionToken: String,
-        currentPassword: String,
         newEmail: String,
         newPassword: String,
     ): AuthResult<Unit> =

@@ -40,7 +40,6 @@ CREATE OR REPLACE PACKAGE PKG_API AS
   -- Signed in (p_authorization is the raw "Authorization" header) ----------
   PROCEDURE change_password(
     p_authorization IN VARCHAR2,
-    p_current_password IN VARCHAR2,
     p_new_email IN VARCHAR2,
     p_new_password IN VARCHAR2,
     p_status OUT NUMBER, p_body OUT CLOB);

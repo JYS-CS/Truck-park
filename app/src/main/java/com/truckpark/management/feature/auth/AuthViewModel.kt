@@ -100,13 +100,12 @@ class AuthViewModel(
     }
 
     fun changePassword(
-        currentPassword: String,
         newEmail: String,
         newPassword: String,
         onComplete: (AuthResult<Unit>) -> Unit,
     ) {
         viewModelScope.launch {
-            val result = authRepository.changePassword(currentPassword, newEmail, newPassword)
+            val result = authRepository.changePassword(newEmail, newPassword)
             if (result is AuthResult.Success) {
                 val current = _uiState.value
                 if (current is AuthUiState.AdminSecuritySetup) {
