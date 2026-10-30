@@ -125,7 +125,7 @@ class AuthViewModel(
         }
     }
 
-    fun sendVerificationCode(onComplete: (AuthResult<String?>) -> Unit) {
+    fun sendVerificationCode(onComplete: (AuthResult<Unit>) -> Unit) {
         viewModelScope.launch {
             val result = authRepository.sendVerificationCode()
             onComplete(result)

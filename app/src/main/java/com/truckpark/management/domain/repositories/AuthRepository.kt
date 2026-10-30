@@ -14,7 +14,7 @@ interface AuthRepository {
     suspend fun currentUser(): AuthResult<AuthUser>
     suspend fun acceptInvite(token: String, fullName: String, password: String): AuthResult<String>
     suspend fun verifyEmail(userId: String, code: String): AuthResult<Unit>
-    suspend fun sendVerificationCode(): AuthResult<String?>
+    suspend fun sendVerificationCode(): AuthResult<Unit>
     suspend fun changePassword(newEmail: String, newPassword: String): AuthResult<Unit>
     fun hasStoredSession(): Boolean
 }

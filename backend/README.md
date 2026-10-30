@@ -79,3 +79,18 @@ Base: `/ords/truckpark/v1/`. Errors are always `{ code, message, request_id }`.
 - **Email sending**: rows queue in `email_outbox`; the Brevo sender job is the next piece.
 - **Sign-up screen** collects a phone number and has no invite token, but the backend is invite-only. The screen needs a matching flow before it calls `acceptInvite`.
 - **Sign-in is not yet wired into the UI.** `AuthRepository` is ready in `AppContainer`.
+
+## Edge controls that must be configured (not in the database)
+
+The database cannot rate-limit by IP, so these live in OCI and must be set before go-live:
+
+- **OCI WAF rate limits on `/auth/*`:** cap login, verify-email, send-verification-code and password-reset requests per IP (for example 10 per minute), and block bursts.
+- **Per-account limits** are already in the database: five wrong passwords lock an account for 15 minutes; three codes per 15 minutes; five verification guesses per hour.
+- **Known trade-off:** the per-account lock can be used by someone else to lock out an admin. Per-IP limits at the WAF reduce this, but do not remove it.
+- **TLS only,** with HSTS on any custom domain.
+- **Logging:** ORDS access logs to OCI Logging. Confirm that request bodies (passwords, codes) are not logged.
+
+## Migrations
+
+- `backend/migrations/2026-10-30_password_must_change.sql`: run once on each existing database.
+- `schema.sql` now refuses to drop tables unless `C_ALLOW_DROP` is set to `'YES'`. Only set it on a throwaway dev database.

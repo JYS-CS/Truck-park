@@ -17,7 +17,7 @@ interface AuthRemoteDataSource {
     suspend fun me(sessionToken: String): AuthResult<AuthUser>
     suspend fun acceptInvite(token: String, fullName: String, password: String): AuthResult<String>
     suspend fun verifyEmail(userId: String, code: String, sessionToken: String? = null): AuthResult<Unit>
-    suspend fun sendVerificationCode(sessionToken: String): AuthResult<String?>
+    suspend fun sendVerificationCode(sessionToken: String): AuthResult<Unit>
     suspend fun changePassword(
         sessionToken: String,
         newEmail: String,

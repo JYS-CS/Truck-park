@@ -83,11 +83,11 @@ class OrdsAuthRemoteDataSource(
         bearer = sessionToken,
     ) { }
 
-    override suspend fun sendVerificationCode(sessionToken: String): AuthResult<String?> = call(
+    override suspend fun sendVerificationCode(sessionToken: String): AuthResult<Unit> = call(
         path = "auth/send-verification-code",
         body = JSONObject(),
         bearer = sessionToken,
-    ) { json -> json.optString("code").ifBlank { null } }
+    ) { }
 
     override suspend fun changePassword(
         sessionToken: String,

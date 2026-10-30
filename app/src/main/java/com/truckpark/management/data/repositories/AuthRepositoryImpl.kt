@@ -54,7 +54,7 @@ class AuthRepositoryImpl(
     override suspend fun verifyEmail(userId: String, code: String): AuthResult<Unit> =
         remote.verifyEmail(userId, code.trim(), store.load()?.sessionToken)
 
-    override suspend fun sendVerificationCode(): AuthResult<String?> =
+    override suspend fun sendVerificationCode(): AuthResult<Unit> =
         authorised { token -> remote.sendVerificationCode(token) }
 
     override suspend fun changePassword(newEmail: String, newPassword: String): AuthResult<Unit> =

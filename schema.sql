@@ -7,7 +7,13 @@
 -- =============================================================================
 -- 1. SAFELY CLEANING UP PREVIOUS IAM OBJECTS (IF EXIST)
 -- =============================================================================
+DECLARE
+  -- Set to 'YES' ONLY on a throwaway dev database. Leave as 'NO' everywhere else.
+  C_ALLOW_DROP CONSTANT VARCHAR2(3) := 'NO';
 BEGIN
+  IF C_ALLOW_DROP != 'YES' THEN
+    RAISE_APPLICATION_ERROR(-20999, 'Refusing to drop IAM tables: C_ALLOW_DROP is not YES');
+  END IF;
   FOR t IN (SELECT table_name FROM user_tables WHERE table_name IN (
     'USER_PERMISSION_EXCEPTIONS', 'ROLE_PERMISSIONS', 'USER_ROLES', 'ROLES',
     'REFRESH_TOKENS', 'SESSIONS', 'DEVICES', 'ONE_TIME_CODES',
@@ -531,7 +537,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_AUTH AS
     UPDATE invites SET used_at = SYSTIMESTAMP WHERE token_hash = v_token_hash;
 
     -- Generate 6-digit email confirmation code
-    v_code := LPAD(TO_CHAR(TRUNC(DBMS_RANDOM.VALUE(100000, 999999))), 6, '0');
+    v_code := LPAD(TO_CHAR(MOD(TO_NUMBER(RAWTOHEX(DBMS_CRYPTO.RANDOMBYTES(4)), 'XXXXXXXX'), 900000) + 100000), 6, '0');
     INSERT INTO one_time_codes (user_id, purpose, code_hash, expires_at)
     VALUES (p_user_id, 'VERIFY_EMAIL', PKG_CRYPTO.hash_sha256(v_code), SYSTIMESTAMP + INTERVAL '15' MINUTE);
 
@@ -581,6 +587,10 @@ CREATE OR REPLACE PACKAGE BODY PKG_AUTH AS
     v_calc_hash := PKG_CRYPTO.hash_password(p_password, v_salt, v_iters);
 
     IF v_calc_hash != v_hash THEN
+      -- A lock that has expired starts a fresh count instead of re-locking on one more guess.
+      IF v_locked IS NOT NULL AND v_locked <= SYSTIMESTAMP THEN
+        v_failed := 0;
+      END IF;
       v_failed := v_failed + 1;
       IF v_failed >= 5 THEN
         UPDATE auth_identities
@@ -593,6 +603,13 @@ CREATE OR REPLACE PACKAGE BODY PKG_AUTH AS
          WHERE user_id = p_user_id AND provider = 'PASSWORD';
         RAISE_APPLICATION_ERROR(-20011, 'Invalid email or password');
       END IF;
+    END IF;
+
+    -- Rejected and deactivated accounts get no session, even with the right password.
+    IF p_user_status IN ('REJECTED', 'DEACTIVATED')
+       OR EXISTS (SELECT 1 FROM users WHERE id = p_user_id
+                     AND deactivate_at IS NOT NULL AND deactivate_at <= SYSTIMESTAMP) THEN
+      RAISE_APPLICATION_ERROR(-20011, 'Invalid email or password');
     END IF;
 
     -- Reset failed attempts on success
@@ -637,14 +654,14 @@ CREATE OR REPLACE PACKAGE BODY PKG_AUTH AS
     v_code_hash := PKG_CRYPTO.hash_sha256(TRIM(p_code));
 
     -- Cap guesses: five wrong attempts burn the code.
-    SELECT COUNT(*) INTO v_count
+    -- Cap guesses across every code issued in the last hour, so resending does not reset the count.
+    SELECT NVL(SUM(attempts), 0) INTO v_count
       FROM one_time_codes
      WHERE user_id = p_user_id
        AND purpose = 'VERIFY_EMAIL'
-       AND used_at IS NULL
-       AND attempts >= 5;
-    IF v_count > 0 THEN
-      RAISE_APPLICATION_ERROR(-20013, 'Too many attempts. Request a new confirmation code.');
+       AND created_at > SYSTIMESTAMP - INTERVAL '1' HOUR;
+    IF v_count >= 5 THEN
+      RAISE_APPLICATION_ERROR(-20013, 'Too many attempts. Wait an hour, then request a new confirmation code.');
     END IF;
 
     SELECT COUNT(*) INTO v_count

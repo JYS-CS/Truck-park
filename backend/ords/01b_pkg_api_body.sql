@@ -345,14 +345,24 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     v_user_id VARCHAR2(36);
     v_email   VARCHAR2(320);
     v_code    VARCHAR2(6);
+    v_recent  NUMBER;
   BEGIN
     PKG_AUTHZ.validate_session(bearer_token(p_authorization));
     v_user_id := PKG_AUTHZ.get_current_user_id();
 
+    -- At most three codes in any 15 minutes.
+    SELECT COUNT(*) INTO v_recent
+      FROM one_time_codes
+     WHERE user_id = v_user_id AND purpose = 'VERIFY_EMAIL'
+       AND created_at > SYSTIMESTAMP - INTERVAL '15' MINUTE;
+    IF v_recent >= 3 THEN
+      RAISE_APPLICATION_ERROR(-20016, 'Please wait a few minutes before requesting another code');
+    END IF;
+
     SELECT email INTO v_email FROM users WHERE id = v_user_id;
 
     -- Generate a clean 6-digit code valid for 15 minutes
-    v_code := LPAD(TO_CHAR(TRUNC(DBMS_RANDOM.VALUE(100000, 999999))), 6, '0');
+    v_code := LPAD(TO_CHAR(MOD(TO_NUMBER(RAWTOHEX(DBMS_CRYPTO.RANDOMBYTES(4)), 'XXXXXXXX'), 900000) + 100000), 6, '0');
 
     -- Expire previous un-used codes
     UPDATE one_time_codes
@@ -368,7 +378,6 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     SELECT JSON_OBJECT(
              'status'     VALUE 'SENT',
              'email'      VALUE v_email,
-             'code'       VALUE v_code,
              'message'    VALUE 'Verification code sent to ' || v_email,
              'request_id' VALUE request_id
              RETURNING CLOB)
@@ -397,10 +406,20 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     v_new_email  VARCHAR2(320);
     v_taken      NUMBER;
     v_must       VARCHAR2(1);
+    v_issued     TIMESTAMP WITH TIME ZONE;
   BEGIN
     -- The signed-in session is the proof of identity for this setup step.
     PKG_AUTHZ.validate_session(bearer_token(p_authorization));
     v_user_id := PKG_AUTHZ.get_current_user_id();
+
+    -- Only a fresh sign-in (within 30 minutes) may change credentials, so a session
+    -- left open on a shared device cannot be used to take over the account.
+    SELECT created_at INTO v_issued
+      FROM sessions
+     WHERE token_hash = PKG_CRYPTO.hash_sha256(TRIM(bearer_token(p_authorization)));
+    IF v_issued < SYSTIMESTAMP - INTERVAL '30' MINUTE THEN
+      RAISE_APPLICATION_ERROR(-20003, 'Sign in again to finish account setup');
+    END IF;
 
     require_text(p_new_password, 'new_password', 100);
 

@@ -81,7 +81,7 @@ private class FakeRemote : AuthRemoteDataSource {
 
     override suspend fun verifyEmail(userId: String, code: String, sessionToken: String?) = AuthResult.Success(Unit)
 
-    override suspend fun sendVerificationCode(sessionToken: String): AuthResult<String?> = AuthResult.Success("123456")
+    override suspend fun sendVerificationCode(sessionToken: String): AuthResult<Unit> = AuthResult.Success(Unit)
 
     override suspend fun changePassword(
         sessionToken: String,
