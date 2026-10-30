@@ -28,6 +28,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -177,8 +178,7 @@ fun OtpCodeEntry(
 
         Row(
             modifier = Modifier
-                .offset(x = shakeX.value.dp)
-                .alpha(if (state == OtpState.Success) 0f else 1f),
+                .alpha(if (state == OtpState.Idle) 1f else 0f),
             horizontalArrangement = Arrangement.spacedBy(OtpBoxGap),
         ) {
             repeat(OTP_LENGTH) { index ->
@@ -213,19 +213,29 @@ fun OtpCodeEntry(
             }
         }
 
-        if (state == OtpState.Success) {
+        // Result seal: a ringed badge with a soft glow, like the reference's morphed circle.
+        if (state != OtpState.Idle) {
+            val sealColor = if (state == OtpState.Success) palette.success else palette.error
             Box(
                 modifier = Modifier
-                    .size(72.dp)
+                    .offset(x = shakeX.value.dp)
+                    .size(78.dp)
+                    .drawBehind {
+                        drawCircle(
+                            color = sealColor.copy(alpha = 0.28f),
+                            radius = size.minDimension / 2f + 6.dp.toPx(),
+                        )
+                    }
                     .clip(CircleShape)
-                    .background(palette.success.copy(alpha = 0.15f)),
+                    .background(sealColor.copy(alpha = 0.12f))
+                    .border(2.dp, sealColor, CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    imageVector = Icons.Default.Check,
-                    contentDescription = "Code accepted",
-                    tint = palette.success,
-                    modifier = Modifier.size(40.dp),
+                    imageVector = if (state == OtpState.Success) Icons.Default.Check else Icons.Default.Close,
+                    contentDescription = if (state == OtpState.Success) "Code accepted" else "Code rejected",
+                    tint = sealColor,
+                    modifier = Modifier.size(38.dp),
                 )
             }
         }
