@@ -11,6 +11,8 @@ data class AuthUser(
     val emailVerified: Boolean = false,
     val roles: List<String>,
     val permissions: Set<String>,
+    /** True while the account still has its setup password; the app must show the setup gate. */
+    val mustChangePassword: Boolean = false,
 ) {
     fun can(permission: String): Boolean = permission in permissions
 }

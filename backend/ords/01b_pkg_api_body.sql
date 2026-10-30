@@ -118,7 +118,11 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
              'roles'          VALUE COALESCE(
                  (SELECT JSON_ARRAYAGG(ur.role_code ORDER BY ur.role_code) FROM user_roles ur WHERE ur.user_id = u.id),
                  '[]') FORMAT JSON,
-             'permissions'    VALUE v_per FORMAT JSON
+             'permissions'    VALUE v_per FORMAT JSON,
+             'must_change_password' VALUE CASE WHEN EXISTS (
+                 SELECT 1 FROM auth_identities ai
+                  WHERE ai.user_id = u.id AND ai.provider = 'PASSWORD' AND ai.password_must_change = 'Y')
+               THEN 'true' ELSE 'false' END FORMAT JSON
              RETURNING CLOB)
       INTO v
       FROM users u
@@ -392,6 +396,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     v_new_hash   VARCHAR2(255);
     v_new_email  VARCHAR2(320);
     v_taken      NUMBER;
+    v_must       VARCHAR2(1);
   BEGIN
     -- The signed-in session is the proof of identity for this setup step.
     PKG_AUTHZ.validate_session(bearer_token(p_authorization));
@@ -418,14 +423,20 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
 
     -- Fetch current stored credentials
     BEGIN
-      SELECT password_hash, password_salt, password_iters
-        INTO v_hash, v_salt, v_iters
+      SELECT password_hash, password_salt, password_iters, password_must_change
+        INTO v_hash, v_salt, v_iters, v_must
         FROM auth_identities
        WHERE user_id = v_user_id AND provider = 'PASSWORD';
     EXCEPTION
       WHEN NO_DATA_FOUND THEN
         bad_request('Account does not have password identity configured');
     END;
+
+    -- Only accounts still on their setup password may use this step. Anyone else must
+    -- use a separate, password-verified change flow.
+    IF v_must != 'Y' THEN
+      RAISE_APPLICATION_ERROR(-20003, 'Account setup is already complete');
+    END IF;
 
     -- Prevent keeping the same password (the default one included)
     v_calc_hash := PKG_CRYPTO.hash_password(p_new_password, v_salt, v_iters);
@@ -441,6 +452,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
        SET password_hash = v_new_hash,
            password_salt = v_new_salt,
            password_iters = 600000,
+           password_must_change = 'N',
            failed_attempts = 0,
            locked_until = NULL,
            updated_at = SYSTIMESTAMP

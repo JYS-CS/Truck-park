@@ -50,6 +50,7 @@ CREATE TABLE auth_identities (
   external_id     VARCHAR2(255),
   failed_attempts NUMBER DEFAULT 0 NOT NULL,
   locked_until    TIMESTAMP WITH TIME ZONE,
+  password_must_change VARCHAR2(1) DEFAULT 'N' NOT NULL CHECK (password_must_change IN ('Y','N')),
   created_at      TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP NOT NULL,
   updated_at      TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP NOT NULL,
   CONSTRAINT uq_auth_provider_ext UNIQUE (provider, external_id)
@@ -861,8 +862,8 @@ BEGIN
     v_salt := PKG_CRYPTO.generate_salt();
     v_pwd_hash := PKG_CRYPTO.hash_password('@Admin', v_salt, 600000);
 
-    INSERT INTO auth_identities (user_id, provider, password_hash, password_salt)
-    VALUES (v_user_id, 'PASSWORD', v_pwd_hash, v_salt);
+    INSERT INTO auth_identities (user_id, provider, password_hash, password_salt, password_must_change)
+    VALUES (v_user_id, 'PASSWORD', v_pwd_hash, v_salt, 'Y');
 
     INSERT INTO user_roles (user_id, role_code) VALUES (v_user_id, 'ADMIN');
 

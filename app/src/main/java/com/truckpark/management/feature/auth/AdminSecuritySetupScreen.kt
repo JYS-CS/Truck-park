@@ -298,9 +298,11 @@ fun AdminSecuritySetupScreen(
                                                     when (codeResult) {
                                                         is AuthResult.Success -> {
                                                             resendCooldown = 60
+                                                            emailError = null
                                                             emailSuccess = "Verification code sent to ${newEmail.trim().lowercase()}"
                                                         }
                                                         is AuthResult.Failure -> {
+                                                            emailSuccess = null
                                                             emailError = codeResult.error.message
                                                         }
                                                     }
@@ -345,9 +347,13 @@ fun AdminSecuritySetupScreen(
                                     when (codeResult) {
                                         is AuthResult.Success -> {
                                             resendCooldown = 60
+                                            emailError = null
                                             emailSuccess = "Verification code sent to ${user.email}"
                                         }
-                                        is AuthResult.Failure -> emailError = codeResult.error.message
+                                        is AuthResult.Failure -> {
+                                            emailSuccess = null
+                                            emailError = codeResult.error.message
+                                        }
                                     }
                                 }
                             },

@@ -157,6 +157,7 @@ class OrdsAuthRemoteDataSource(
             emailVerified = json.optBoolean("email_verified", false),
             roles = List(roles?.length() ?: 0) { roles!!.getString(it) },
             permissions = List(permissions?.length() ?: 0) { permissions!!.getString(it) }.toSet(),
+            mustChangePassword = json.optBoolean("must_change_password", false),
         )
     }
 }

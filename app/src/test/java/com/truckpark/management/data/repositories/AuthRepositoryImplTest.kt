@@ -23,7 +23,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 private val NOW: Instant = Instant.parse("2026-10-30T00:00:00Z")
-private val USER = AuthUser("u1", "Ada", "a@x.com", "APPROVED", listOf("ADMIN"), setOf("user.invite"))
+private val USER = AuthUser(
+    id = "u1",
+    fullName = "Ada",
+    email = "a@x.com",
+    status = "APPROVED",
+    roles = listOf("ADMIN"),
+    permissions = setOf("user.invite"),
+)
 
 private class MemoryStore(var session: AuthSession? = null) : SessionStore {
     override fun load() = session

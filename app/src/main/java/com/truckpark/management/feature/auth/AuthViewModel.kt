@@ -50,11 +50,11 @@ class AuthViewModel(
                 is AuthResult.Success -> {
                     val user = result.value
                     val isAdmin = user.roles.contains("ADMIN")
-                    if (isAdmin && !user.emailVerified) {
+                    if (isAdmin && (!user.emailVerified || user.mustChangePassword)) {
                         _uiState.value = AuthUiState.AdminSecuritySetup(
                             user = user,
-                            emailVerified = false,
-                            passwordChanged = true, // already has active session
+                            emailVerified = user.emailVerified,
+                            passwordChanged = !user.mustChangePassword,
                         )
                     } else {
                         _uiState.value = AuthUiState.Authenticated(user)
@@ -75,15 +75,15 @@ class AuthViewModel(
                 is AuthResult.Success -> {
                     val user = result.value.user
                     val isAdmin = user.roles.contains("ADMIN")
-                    // An admin using the initial password or with unverified email MUST pass security setup
-                    val isInitialPassword = password == "@Admin"
-                    val needsSecurityGate = isAdmin && (!user.emailVerified || isInitialPassword)
+                    // An admin on the setup password or with an unverified email MUST pass security setup.
+                    // The server decides via mustChangePassword; the app never compares passwords.
+                    val needsSecurityGate = isAdmin && (!user.emailVerified || user.mustChangePassword)
 
                     if (needsSecurityGate) {
                         _uiState.value = AuthUiState.AdminSecuritySetup(
                             user = user,
                             emailVerified = user.emailVerified,
-                            passwordChanged = !isInitialPassword,
+                            passwordChanged = !user.mustChangePassword,
                         )
                     } else {
                         _uiState.value = AuthUiState.Authenticated(user)
@@ -111,7 +111,11 @@ class AuthViewModel(
                 if (current is AuthUiState.AdminSecuritySetup) {
                     // The new email is unverified until its code is confirmed.
                     _uiState.value = current.copy(
-                        user = current.user.copy(email = newEmail.trim().lowercase(), emailVerified = false),
+                        user = current.user.copy(
+                            email = newEmail.trim().lowercase(),
+                            emailVerified = false,
+                            mustChangePassword = false,
+                        ),
                         passwordChanged = true,
                         emailVerified = false,
                     )
