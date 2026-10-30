@@ -137,8 +137,6 @@ fun AdminSecuritySetupScreen(
         }
     }
 
-    val allRequirementsMet = passwordChanged && emailVerified
-
     AppBackground {
         Box(
             modifier = Modifier
@@ -486,64 +484,6 @@ fun AdminSecuritySetupScreen(
                     }
                 }
 
-                }
-
-                Spacer(modifier = Modifier.height(28.dp))
-
-                // BOTTOM ACTION: PROCEED TO DASHBOARD
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .widthIn(max = 440.dp),
-                ) {
-                    val proceedButtonBrush = if (allRequirementsMet) {
-                        if (dark) {
-                            Brush.linearGradient(listOf(Color(0xFF10B981), Color(0xFF059669)))
-                        } else {
-                            Brush.linearGradient(listOf(Color(0xFF059669), Color(0xFF047857)))
-                        }
-                    } else {
-                        if (dark) {
-                            Brush.linearGradient(listOf(Color(0xFF334155), Color(0xFF1E293B)))
-                        } else {
-                            Brush.linearGradient(listOf(Color(0xFFCBD5E1), Color(0xFF94A3B8)))
-                        }
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(58.dp)
-                            .clip(CapsuleShape)
-                            .background(proceedButtonBrush)
-                            .clickable(
-                                enabled = allRequirementsMet,
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                                onClick = onSetupComplete,
-                            ),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center,
-                        ) {
-                            if (allRequirementsMet) {
-                                Icon(
-                                    imageVector = Icons.Default.CheckCircle,
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(20.dp),
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                            }
-                            Text(
-                                text = if (allRequirementsMet) "Enter TruckPark Command Center" else "Complete Both Steps to Proceed",
-                                color = if (allRequirementsMet) Color.White else if (dark) Color(0xFF64748B) else Color(0xFF475569),
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                            )
-                        }
-                    }
                 }
 
                 Spacer(modifier = Modifier.height(24.dp))
