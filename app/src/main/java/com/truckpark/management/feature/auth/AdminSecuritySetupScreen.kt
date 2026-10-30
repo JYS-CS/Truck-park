@@ -118,12 +118,8 @@ fun AdminSecuritySetupScreen(
     var passwordSuccess by remember { mutableStateOf<String?>(null) }
 
     // Email verification fields
-    var verificationCode by remember { mutableStateOf("") }
-    var isSendingCode by remember { mutableStateOf(false) }
-    var isVerifyingCode by remember { mutableStateOf(false) }
     var emailError by remember { mutableStateOf<String?>(null) }
     var emailSuccess by remember { mutableStateOf<String?>(null) }
-    var debugCodeHint by remember { mutableStateOf<String?>(null) }
     var resendCooldown by remember { mutableIntStateOf(0) }
 
     val scope = rememberCoroutineScope()
@@ -303,7 +299,6 @@ fun AdminSecuritySetupScreen(
                                                         is AuthResult.Success -> {
                                                             resendCooldown = 60
                                                             emailSuccess = "Verification code sent to ${newEmail.trim().lowercase()}"
-                                                            debugCodeHint = codeResult.value
                                                         }
                                                         is AuthResult.Failure -> {
                                                             emailError = codeResult.error.message
@@ -339,148 +334,39 @@ fun AdminSecuritySetupScreen(
                             dark = dark,
                         )
                     } else {
-                        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    text = user.email,
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                                    color = if (dark) Color.White else Color(0xFF0F172A),
-                                )
-
-                                Box(
-                                    modifier = Modifier
-                                        .clip(CapsuleShape)
-                                        .background(if (dark) Color(0xFF1E293B) else Color(0xFFE2E8F0))
-                                        .clickable(enabled = !isSendingCode && resendCooldown == 0) {
-                                            isSendingCode = true
-                                            emailError = null
-                                            viewModel.sendVerificationCode { result ->
-                                                isSendingCode = false
-                                                when (result) {
-                                                    is AuthResult.Success -> {
-                                                        resendCooldown = 60
-                                                        emailSuccess = "Verification code dispatched!"
-                                                        if (result.value != null) {
-                                                            debugCodeHint = result.value
-                                                        }
-                                                    }
-                                                    is AuthResult.Failure -> {
-                                                        emailError = result.error.message
-                                                    }
-                                                }
-                                            }
+                        EmailCodeVerification(
+                            email = user.email,
+                            dark = dark,
+                            notice = emailError ?: emailSuccess,
+                            resendCooldownSeconds = resendCooldown,
+                            onResend = {
+                                emailError = null
+                                viewModel.sendVerificationCode { codeResult ->
+                                    when (codeResult) {
+                                        is AuthResult.Success -> {
+                                            resendCooldown = 60
+                                            emailSuccess = "Verification code sent to ${user.email}"
                                         }
-                                        .padding(horizontal = 14.dp, vertical = 8.dp),
-                                ) {
-                                    if (isSendingCode) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(16.dp),
-                                            strokeWidth = 2.dp,
-                                            color = if (dark) Color(0xFF38BDF8) else Color(0xFF0284C7),
-                                        )
-                                    } else {
-                                        Text(
-                                            text = if (resendCooldown > 0) "Resend (${resendCooldown}s)" else "Send Code",
-                                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                            color = if (resendCooldown > 0) {
-                                                Color(0xFF64748B)
-                                            } else if (dark) {
-                                                Color(0xFF38BDF8)
-                                            } else {
-                                                Color(0xFF0284C7)
-                                            },
-                                        )
+                                        is AuthResult.Failure -> emailError = codeResult.error.message
                                     }
                                 }
-                            }
-
-                            if (debugCodeHint != null) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(if (dark) Color(0xFF0C4A6E).copy(alpha = 0.4f) else Color(0xFFE0F2FE))
-                                        .border(1.dp, if (dark) Color(0xFF0284C7) else Color(0xFF38BDF8), RoundedCornerShape(12.dp))
-                                        .clickable { verificationCode = debugCodeHint!! }
-                                        .padding(12.dp),
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        modifier = Modifier.fillMaxWidth(),
-                                    ) {
-                                        Column {
-                                            Text(
-                                                text = "Test Verification Code",
-                                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                                color = if (dark) Color(0xFF7DD3FC) else Color(0xFF0369A1),
-                                            )
-                                            Text(
-                                                text = debugCodeHint!!,
-                                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold, letterSpacing = 2.sp),
-                                                color = if (dark) Color.White else Color(0xFF0C4A6E),
-                                            )
-                                        }
-                                        Text(
-                                            text = "Tap to fill",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = if (dark) Color(0xFF38BDF8) else Color(0xFF0284C7),
-                                        )
-                                    }
-                                }
-                            }
-
-                            SetupInputField(
-                                value = verificationCode,
-                                onValueChange = {
-                                    if (it.length <= 6 && it.all { c -> c.isDigit() }) {
-                                        verificationCode = it
-                                        emailError = null
-                                    }
-                                },
-                                placeholder = "Enter 6-digit code",
-                                icon = Icons.Default.Email,
-                                keyboardType = KeyboardType.Number,
-                                dark = dark,
-                            )
-
-                            if (emailError != null) {
-                                ErrorMessageBanner(message = emailError!!, dark = dark)
-                            }
-
-                            if (emailSuccess != null) {
-                                SuccessMessageBanner(message = emailSuccess!!, dark = dark)
-                            }
-
-                            val canVerify = verificationCode.length == 6 && !isVerifyingCode
-
-                            SetupActionButton(
-                                text = "Verify Email",
-                                isEnabled = canVerify,
-                                isLoading = isVerifyingCode,
-                                dark = dark,
-                                onClick = {
-                                    isVerifyingCode = true
-                                    emailError = null
-                                    viewModel.verifyEmail(verificationCode) { result ->
-                                        isVerifyingCode = false
-                                        when (result) {
-                                            is AuthResult.Success -> {
+                            },
+                            onVerify = { code, onResult ->
+                                viewModel.verifyEmail(code) { result ->
+                                    when (result) {
+                                        is AuthResult.Success -> {
+                                            onResult(null)
+                                            // Let the green success animation play before the page changes.
+                                            scope.launch {
+                                                delay(900)
                                                 emailVerified = true
-                                                emailSuccess = "Email successfully verified!"
-                                            }
-                                            is AuthResult.Failure -> {
-                                                emailError = result.error.message
                                             }
                                         }
+                                        is AuthResult.Failure -> onResult(result.error.message)
                                     }
-                                },
-                            )
-                        }
+                                }
+                            },
+                        )
                     }
                 }
 
