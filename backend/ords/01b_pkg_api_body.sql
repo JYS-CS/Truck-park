@@ -32,6 +32,19 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
   FUNCTION bearer_token(p_authorization IN VARCHAR2) RETURN VARCHAR2 IS
     v_h VARCHAR2(2000) := TRIM(p_authorization);
   BEGIN
+    IF v_h IS NULL THEN
+      BEGIN
+        v_h := TRIM(OWA_UTIL.GET_CGI_ENV('HTTP_AUTHORIZATION'));
+      EXCEPTION
+        WHEN OTHERS THEN
+          BEGIN
+            v_h := TRIM(OWA_UTIL.GET_CGI_ENV('AUTHORIZATION'));
+          EXCEPTION
+            WHEN OTHERS THEN v_h := NULL;
+          END;
+      END;
+    END IF;
+
     IF v_h IS NULL OR UPPER(SUBSTR(v_h, 1, 7)) != 'BEARER ' THEN
       RETURN NULL;
     END IF;
@@ -451,11 +464,16 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
         bad_request('Account does not have password identity configured');
     END;
 
-    -- Only accounts still on their setup password may use this step. Anyone else must
-    -- use a separate, password-verified change flow.
-    IF v_must != 'Y' THEN
-      RAISE_APPLICATION_ERROR(-20003, 'Account setup is already complete');
-    END IF;
+    -- Only accounts still undergoing initial setup (password_must_change = 'Y' OR email not yet verified)
+    -- may use this step. Once fully verified and set up, changes require the standard change flow.
+    DECLARE
+      v_verified_at TIMESTAMP WITH TIME ZONE;
+    BEGIN
+      SELECT email_verified_at INTO v_verified_at FROM users WHERE id = v_user_id;
+      IF v_must != 'Y' AND v_verified_at IS NOT NULL THEN
+        RAISE_APPLICATION_ERROR(-20003, 'Account setup is already complete');
+      END IF;
+    END;
 
     -- Prevent keeping the same password (the default one included)
     v_calc_hash := PKG_CRYPTO.hash_password(p_new_password, v_salt, v_iters);

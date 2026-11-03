@@ -12,6 +12,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -35,6 +36,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -47,6 +49,7 @@ import kotlinx.coroutines.launch
 
 /**
  * Premium Hibiscus animated liquid glass splash screen.
+ *
  * Features:
  * - Fluid radial backlight pulse
  * - Glossy "H" emblem floating spring-in scale and gentle levitation
@@ -71,7 +74,7 @@ fun HibiscusAnimatedSplashScreen(
     val emblemScale = remember { Animatable(0.70f) }
     val emblemAlpha = remember { Animatable(0f) }
     val wordmarkAlpha = remember { Animatable(0f) }
-    val wordmarkOffset = remember { Animatable(24f) }
+    val wordmarkOffset = remember { Animatable(16f) }
     val underlineScale = remember { Animatable(0f) }
     val subtitleAlpha = remember { Animatable(0f) }
     val glowPulse = remember { Animatable(0.40f) }
@@ -196,19 +199,22 @@ fun HibiscusAnimatedSplashScreen(
             Image(
                 painter = painterResource(id = R.drawable.hibiscus_emblem_trans),
                 contentDescription = "Hibiscus Emblem",
+                contentScale = ContentScale.Fit,
                 modifier = Modifier
-                    .size(190.dp)
+                    .width(170.dp)
+                    .aspectRatio(794f / 620f)
                     .scale(emblemScale.value)
                     .alpha(emblemAlpha.value),
             )
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(4.dp))
 
             // Glossy HIBISCUSS Wordmark with Shimmer Light Sweep
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
-                    .width(280.dp)
+                    .width(260.dp)
+                    .aspectRatio(1014f / 210f)
                     .offset(y = wordmarkOffset.value.dp)
                     .alpha(wordmarkAlpha.value),
             ) {
@@ -217,6 +223,7 @@ fun HibiscusAnimatedSplashScreen(
                         id = if (darkTheme) R.drawable.hibiscus_wordmark_trans else R.drawable.hibiscus_wordmark_light
                     ),
                     contentDescription = "HIBISCUSS",
+                    contentScale = ContentScale.Fit,
                     modifier = Modifier.fillMaxSize(),
                 )
 
@@ -238,7 +245,7 @@ fun HibiscusAnimatedSplashScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             // Cyan luminous underline (from the SVG brand guide)
             Box(

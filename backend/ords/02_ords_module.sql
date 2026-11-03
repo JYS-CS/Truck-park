@@ -68,6 +68,19 @@ DECLARE
       p_source         =>
         'DECLARE v_s NUMBER; v_b CLOB; BEGIN ' || p_call ||
         ' :status_code := v_s; PKG_API_HTTP.emit(v_b); END;');
+
+    -- Explicitly bind the HTTP Authorization header for ORDS handlers that require it
+    IF INSTR(p_call, ':authorization') > 0 THEN
+      ORDS.DEFINE_PARAMETER(
+        p_module_name        => c_module,
+        p_pattern            => p_pattern,
+        p_method             => p_method,
+        p_name               => 'authorization',
+        p_bind_variable_name => 'authorization',
+        p_source_type        => 'HEADER',
+        p_param_type         => 'STRING',
+        p_access_method      => 'IN');
+    END IF;
   END add_handler;
 BEGIN
   BEGIN

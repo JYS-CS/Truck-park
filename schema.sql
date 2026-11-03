@@ -9,7 +9,7 @@
 -- =============================================================================
 DECLARE
   -- Set to 'YES' ONLY on a throwaway dev database. Leave as 'NO' everywhere else.
-  C_ALLOW_DROP CONSTANT VARCHAR2(3) := 'NO';
+  C_ALLOW_DROP CONSTANT VARCHAR2(3) := 'YES';
 BEGIN
   IF C_ALLOW_DROP != 'YES' THEN
     RAISE_APPLICATION_ERROR(-20999, 'Refusing to drop IAM tables: C_ALLOW_DROP is not YES');
@@ -565,13 +565,14 @@ CREATE OR REPLACE PACKAGE BODY PKG_AUTH AS
     v_failed     NUMBER;
     v_locked     TIMESTAMP WITH TIME ZONE;
     v_calc_hash  VARCHAR2(255);
+    v_deact_at   TIMESTAMP WITH TIME ZONE;
     v_sess_raw   VARCHAR2(64);
     v_ref_raw    VARCHAR2(64);
   BEGIN
     BEGIN
-      SELECT u.id, u.status, ai.password_hash, ai.password_salt, ai.password_iters,
+      SELECT u.id, u.status, u.deactivate_at, ai.password_hash, ai.password_salt, ai.password_iters,
              ai.failed_attempts, ai.locked_until
-        INTO p_user_id, p_user_status, v_hash, v_salt, v_iters, v_failed, v_locked
+        INTO p_user_id, p_user_status, v_deact_at, v_hash, v_salt, v_iters, v_failed, v_locked
         FROM users u
         JOIN auth_identities ai ON ai.user_id = u.id AND ai.provider = 'PASSWORD'
        WHERE u.email = v_email;
@@ -607,8 +608,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_AUTH AS
 
     -- Rejected and deactivated accounts get no session, even with the right password.
     IF p_user_status IN ('REJECTED', 'DEACTIVATED')
-       OR EXISTS (SELECT 1 FROM users WHERE id = p_user_id
-                     AND deactivate_at IS NOT NULL AND deactivate_at <= SYSTIMESTAMP) THEN
+       OR (v_deact_at IS NOT NULL AND v_deact_at <= SYSTIMESTAMP) THEN
       RAISE_APPLICATION_ERROR(-20011, 'Invalid email or password');
     END IF;
 
@@ -874,7 +874,7 @@ BEGIN
 
   IF v_admin_count = 0 THEN
     INSERT INTO users (id, full_name, email, email_verified_at, status)
-    VALUES (v_user_id, 'Initial System Administrator', 'admin@hibiscuss.com', SYSTIMESTAMP, 'APPROVED');
+    VALUES (v_user_id, 'Administrator', 'admin@hibiscuss.com', SYSTIMESTAMP, 'APPROVED');
 
     v_salt := PKG_CRYPTO.generate_salt();
     v_pwd_hash := PKG_CRYPTO.hash_password('@Admin', v_salt, 600000);

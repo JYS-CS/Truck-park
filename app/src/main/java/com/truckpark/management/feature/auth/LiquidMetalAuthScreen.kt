@@ -29,13 +29,24 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
@@ -44,12 +55,17 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import com.truckpark.management.core.designsystem.components.StatusBadge
+import com.truckpark.management.core.designsystem.components.StatusKind
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -252,7 +268,10 @@ fun LiquidMetalAuthScreen(
     var fullNameError by remember { mutableStateOf<String?>(null) }
     var phoneNumberError by remember { mutableStateOf<String?>(null) }
 
-    val submitBringIntoViewRequester = remember { BringIntoViewRequester() }
+    var isVerifyingRegistration by remember { mutableStateOf(false) }
+    var isRegistrationPendingApproval by remember { mutableStateOf(false) }
+    var regResendCooldown by remember { mutableIntStateOf(0) }
+    var regNoticeMessage by remember { mutableStateOf<String?>(null) }
 
     var animTime by remember { mutableStateOf(0f) }
     var animPos by remember { mutableStateOf(0f) }
@@ -260,6 +279,13 @@ fun LiquidMetalAuthScreen(
 
     val coroutineScope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
+
+    LaunchedEffect(regResendCooldown) {
+        if (regResendCooldown > 0) {
+            delay(1000)
+            regResendCooldown -= 1
+        }
+    }
 
     fun resetState(newMode: AuthMode) {
         mode = newMode
@@ -272,6 +298,10 @@ fun LiquidMetalAuthScreen(
         fullNameError = null
         phoneNumberError = null
         serverErrorMessage = null
+        isVerifyingRegistration = false
+        isRegistrationPendingApproval = false
+        regNoticeMessage = null
+        regResendCooldown = 0
         viewModel.clearError()
         focusManager.clearFocus()
     }
@@ -311,7 +341,9 @@ fun LiquidMetalAuthScreen(
 
         if (nError == null && eError == null && phError == null && pError == null) {
             focusManager.clearFocus()
-            onAuthSuccess()
+            isVerifyingRegistration = true
+            regResendCooldown = 40
+            regNoticeMessage = "Verification code sent to $sanitizedEmail"
         }
     }
 
@@ -345,16 +377,6 @@ fun LiquidMetalAuthScreen(
     }
 
     val scrollState = rememberScrollState()
-    val density = androidx.compose.ui.platform.LocalDensity.current
-
-    // Scroll to bottom when the keyboard pops up in split mode
-    val imeBottom = WindowInsets.ime.getBottom(density)
-    androidx.compose.runtime.LaunchedEffect(imeBottom) {
-        if (isSplit && imeBottom > 0) {
-            kotlinx.coroutines.delay(450)
-            scrollState.animateScrollTo(scrollState.maxValue)
-        }
-    }
 
     AppBackground {
         Box(
@@ -401,12 +423,46 @@ fun LiquidMetalAuthScreen(
 
                 Spacer(modifier = Modifier.height(28.dp))
 
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 4.dp),
-                    contentAlignment = Alignment.TopCenter,
-                ) {
+                if (isRegistrationPendingApproval) {
+                    RegistrationPendingApprovalCard(
+                        email = emailOrUser.trim(),
+                        onBackToSignIn = { resetState(AuthMode.SignIn) },
+                        dark = dark,
+                    )
+                } else if (isVerifyingRegistration) {
+                    EmailCodeVerification(
+                        email = emailOrUser.trim(),
+                        dark = dark,
+                        notice = regNoticeMessage,
+                        resendCooldownSeconds = regResendCooldown,
+                        onResend = {
+                            regResendCooldown = 40
+                            regNoticeMessage = "New verification code sent to ${emailOrUser.trim()}"
+                        },
+                        onVerify = { code, onResult ->
+                            if (code.length == 6) {
+                                onResult(null)
+                                coroutineScope.launch {
+                                    delay(900)
+                                    isVerifyingRegistration = false
+                                    isRegistrationPendingApproval = true
+                                }
+                            } else {
+                                onResult("Enter a valid 6-digit confirmation code")
+                            }
+                        },
+                        onBack = {
+                            isVerifyingRegistration = false
+                            regNoticeMessage = null
+                        },
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp),
+                        contentAlignment = Alignment.TopCenter,
+                    ) {
                     if (isSplit && animTime < 1.4f) {
                         val liquidAlpha = ((1.4f - animTime) / 1.4f).coerceIn(0f, 1f)
                         val strandColor = if (dark) scheme.secondary else scheme.primary
@@ -549,7 +605,7 @@ fun LiquidMetalAuthScreen(
                                 }
 
                                 LiquidTriggerButton(
-                                    text = if (isLoading) "Signing in..." else "Complete Sign In →",
+                                    text = if (isLoading) "Signing in..." else "Sign In",
                                     onClick = { submitSignIn() },
                                     dark = dark,
                                     isLoading = isLoading,
@@ -657,26 +713,18 @@ fun LiquidMetalAuthScreen(
                                 )
 
                                 LiquidTriggerButton(
-                                    text = "Complete Sign Up →",
+                                    text = if (isLoading) "Creating account..." else "Create Account",
                                     onClick = { submitSignUp() },
                                     dark = dark,
+                                    isLoading = isLoading,
                                     bringIntoViewRequester = null,
                                 )
                             }
 
-                            Text(
-                                text = "Cancel / Back",
-                                color = scheme.onSurfaceVariant,
-                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable { resetState(mode) }
-                                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                            )
-
-                            Spacer(modifier = Modifier.height(120.dp))
+                            Spacer(modifier = Modifier.height(24.dp))
                         }
                     }
+                }
                 }
             }
         }
@@ -992,6 +1040,17 @@ private fun LiquidTriggerButton(
     isLoading: Boolean = false,
     bringIntoViewRequester: BringIntoViewRequester? = null,
 ) {
+    val infiniteTransition = rememberInfiniteTransition(label = "button_shimmer")
+    val shimmerTranslate by infiniteTransition.animateFloat(
+        initialValue = -1f,
+        targetValue = 2f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1400, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "shimmerTranslate",
+    )
+
     val buttonBrush = if (dark) {
         Brush.linearGradient(
             listOf(
@@ -1038,15 +1097,44 @@ private fun LiquidTriggerButton(
                     size = Size(size.width, 2.dp.toPx()),
                     cornerRadius = androidx.compose.ui.geometry.CornerRadius(999.dp.toPx()),
                 )
+
+                // When loading: animate a smooth liquid light sweep across the capsule
+                if (isLoading) {
+                    val sweepWidth = size.width * 0.45f
+                    val startX = (size.width + sweepWidth * 2f) * shimmerTranslate - sweepWidth
+                    drawRoundRect(
+                        Brush.horizontalGradient(
+                            colors = listOf(
+                                Color.Transparent,
+                                (if (dark) Color.White else Color(0xFF00F5FF)).copy(alpha = if (dark) 0.20f else 0.30f),
+                                (if (dark) Color.White else Color(0xFF67E8F9)).copy(alpha = if (dark) 0.40f else 0.50f),
+                                Color.Transparent,
+                            ),
+                            startX = startX,
+                            endX = startX + sweepWidth,
+                        ),
+                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(999.dp.toPx()),
+                    )
+                }
             },
         contentAlignment = Alignment.Center,
     ) {
         if (isLoading) {
-            androidx.compose.material3.CircularProgressIndicator(
-                color = textColor,
-                modifier = Modifier.size(24.dp),
-                strokeWidth = 2.5.dp,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                LiquidOrbitalLoader(dark = dark)
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = text,
+                    color = textColor,
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.4.sp,
+                    ),
+                )
+            }
         } else {
             Text(
                 text = text,
@@ -1054,6 +1142,86 @@ private fun LiquidTriggerButton(
                 style = MaterialTheme.typography.titleMedium.copy(
                     fontWeight = FontWeight.Bold,
                 ),
+            )
+        }
+    }
+}
+
+/**
+ * Organic glowing liquid orbital loader that matches the Hibiscus liquid-metal design system.
+ * Features an electric cyan and indigo trail with a glowing specular droplet head.
+ */
+@Composable
+private fun LiquidOrbitalLoader(
+    dark: Boolean,
+    modifier: Modifier = Modifier.size(20.dp),
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "liquid_spinner")
+    val rotation by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 850, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "rotation",
+    )
+    val pulse by infiniteTransition.animateFloat(
+        initialValue = 0.85f,
+        targetValue = 1.15f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 500, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "pulse",
+    )
+
+    val primaryCyan = Color(0xFF00F5FF)
+    val electricIndigo = Color(0xFF6366F1)
+
+    Canvas(modifier = modifier) {
+        val strokeWidth = 2.4.dp.toPx()
+        val radius = (size.minDimension - strokeWidth * 2f) / 2f
+        val center = Offset(size.width / 2f, size.height / 2f)
+
+        rotate(rotation, pivot = center) {
+            // Fluid trailing arc with liquid cyan & electric indigo gradient
+            val sweepGradient = Brush.sweepGradient(
+                colors = listOf(
+                    Color.Transparent,
+                    (if (dark) electricIndigo else primaryCyan).copy(alpha = 0.15f),
+                    if (dark) primaryCyan else electricIndigo,
+                    if (dark) Color(0xFF38BDF8) else Color(0xFF00F5FF),
+                ),
+                center = center,
+            )
+
+            drawArc(
+                brush = sweepGradient,
+                startAngle = 0f,
+                sweepAngle = 270f,
+                useCenter = false,
+                style = Stroke(width = strokeWidth, cap = StrokeCap.Round),
+                size = Size(radius * 2f, radius * 2f),
+                topLeft = Offset(center.x - radius, center.y - radius),
+            )
+
+            // Leading glowing liquid droplet head
+            val leadAngleRad = Math.toRadians(270.0)
+            val headX = center.x + radius * Math.cos(leadAngleRad).toFloat()
+            val headY = center.y + radius * Math.sin(leadAngleRad).toFloat()
+
+            // Outer liquid glow
+            drawCircle(
+                color = primaryCyan.copy(alpha = 0.55f),
+                radius = strokeWidth * 1.6f * pulse,
+                center = Offset(headX, headY),
+            )
+            // Core specular droplet bead
+            drawCircle(
+                color = if (dark) Color.White else Color(0xFFE0F2FE),
+                radius = strokeWidth * 1.0f,
+                center = Offset(headX, headY),
             )
         }
     }
@@ -1206,6 +1374,107 @@ private fun PasswordRequirementsReflection(
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * Enterprise approval checkpoint shown after confirming registration email.
+ * Lets applicant know their registration has entered the Administrator approval queue.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun RegistrationPendingApprovalCard(
+    email: String,
+    onBackToSignIn: () -> Unit,
+    dark: Boolean,
+) {
+    val cardBg = if (dark) Color(0xFF0F172A).copy(alpha = 0.90f) else Color.White.copy(alpha = 0.95f)
+    val cardBorder = if (dark) Color(0xFF334155).copy(alpha = 0.6f) else Color(0xFFE2E8F0)
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .widthIn(max = 420.dp)
+            .clip(RoundedCornerShape(24.dp))
+            .background(cardBg)
+            .border(1.dp, cardBorder, RoundedCornerShape(24.dp))
+            .padding(24.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(64.dp)
+                    .clip(CircleShape)
+                    .background(
+                        Brush.radialGradient(
+                            listOf(
+                                Color(0xFF10B981).copy(alpha = 0.25f),
+                                Color(0xFF059669).copy(alpha = 0.08f),
+                                Color.Transparent,
+                            ),
+                        ),
+                    )
+                    .border(1.5.dp, Color(0xFF10B981).copy(alpha = 0.7f), CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Default.CheckCircle,
+                    contentDescription = null,
+                    tint = Color(0xFF10B981),
+                    modifier = Modifier.size(32.dp),
+                )
+            }
+
+            Text(
+                text = "Application Submitted",
+                style = MaterialTheme.typography.headlineSmall.copy(
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = (-0.5).sp,
+                ),
+                color = if (dark) Color.White else Color(0xFF0F172A),
+                textAlign = TextAlign.Center,
+            )
+
+            StatusBadge(
+                kind = StatusKind.Warning,
+                label = "Pending Admin Approval",
+            )
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(if (dark) Color(0xFF1E293B).copy(alpha = 0.6f) else Color(0xFFF8FAFC))
+                    .border(1.dp, if (dark) Color(0xFF334155).copy(alpha = 0.4f) else Color(0xFFE2E8F0), RoundedCornerShape(14.dp))
+                    .padding(16.dp),
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Your email ($email) has been verified.",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                        color = if (dark) Color(0xFF67E8F9) else Color(0xFF0369A1),
+                    )
+                    Text(
+                        text = "Your registration has been forwarded to the Truck Park Administrator for review and role assignment. You will receive an email once your account is approved.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (dark) Color(0xFF94A3B8) else Color(0xFF64748B),
+                        lineHeight = 18.sp,
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            LiquidTriggerButton(
+                text = "Back to Sign In",
+                onClick = onBackToSignIn,
+                dark = dark,
+            )
         }
     }
 }

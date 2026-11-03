@@ -13,6 +13,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,13 +23,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -38,6 +44,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -85,27 +92,27 @@ private class OtpPalette(
 
 private fun otpPalette(dark: Boolean) = if (dark) {
     OtpPalette(
-        boxFill = Color(0xFF1E293B),
-        boxBorder = Color(0xFF334155),
+        boxFill = Color(0xFF101426),
+        boxBorder = Color(0xFF222944),
         text = Color.White,
-        glow = listOf(Color(0xFF38BDF8), Color(0xFF34D399)),
+        glow = listOf(Color(0xFF6366F1), Color(0xFF818CF8)),
         success = Color(0xFF34D399),
         error = Color(0xFFF87171),
-        accent = Color(0xFF38BDF8),
-        muted = Color(0xFF94A3B8),
-        chip = Color(0xFF1E293B),
+        accent = Color(0xFF818CF8),
+        muted = Color(0xFF8E9BB5),
+        chip = Color(0xFF161C33),
     )
 } else {
     OtpPalette(
         boxFill = Color.White,
         boxBorder = Color(0xFFCBD5E1),
         text = Color(0xFF0F172A),
-        glow = listOf(Color(0xFF38BDF8), Color(0xFF34D399)),
+        glow = listOf(Color(0xFF6366F1), Color(0xFF818CF8)),
         success = Color(0xFF10B981),
         error = Color(0xFFEF4444),
-        accent = Color(0xFF0284C7),
+        accent = Color(0xFF4F46E5),
         muted = Color(0xFF64748B),
-        chip = Color(0xFFE2E8F0),
+        chip = Color(0xFFF1F5F9),
     )
 }
 
@@ -136,7 +143,13 @@ fun OtpCodeEntry(
         label = "otpPhase",
     )
 
-    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+
+    LaunchedEffect(Unit) {
+        delay(250)
+        focusRequester.requestFocus()
+        keyboardController?.show()
+    }
 
     LaunchedEffect(state) {
         if (state == OtpState.Error) {
@@ -147,18 +160,28 @@ fun OtpCodeEntry(
         }
     }
 
-    Box(
+    BoxWithConstraints(
         modifier = modifier
-            .width(OtpRowWidth)
-            .height(OtpBoxHeight)
+            .fillMaxWidth()
             .clickable(
                 enabled = enabled,
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
-            ) { focusRequester.requestFocus() },
+            ) {
+                focusRequester.requestFocus()
+                keyboardController?.show()
+            },
         contentAlignment = Alignment.Center,
     ) {
-        // Hidden field that receives the keyboard, digits and paste. The boxes only display it.
+        // Calculate dynamic box width & gap based on available width
+        val totalAvailableWidth = maxWidth
+        val calculatedGap = if (totalAvailableWidth < 340.dp) 6.dp else 8.dp
+        val availableForBoxes = totalAvailableWidth - (calculatedGap * (OTP_LENGTH - 1))
+        val boxWidth = minOf(44.dp, (availableForBoxes / OTP_LENGTH).coerceAtLeast(36.dp))
+        val boxHeight = (boxWidth * 1.45f).coerceIn(52.dp, 68.dp)
+        val corner = 10.dp
+
+        // Transparent field spanning the row so Android OS directly handles touches
         BasicTextField(
             value = code,
             onValueChange = { raw ->
@@ -167,48 +190,67 @@ fun OtpCodeEntry(
             },
             enabled = enabled && state != OtpState.Success,
             singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.NumberPassword,
+            ),
             textStyle = TextStyle(color = Color.Transparent),
             cursorBrush = SolidColor(Color.Transparent),
             modifier = Modifier
-                .size(1.dp)
-                .alpha(0f)
+                .matchParentSize()
+                .alpha(0.01f)
                 .focusRequester(focusRequester),
         )
 
         Row(
             modifier = Modifier
                 .alpha(if (state == OtpState.Idle) 1f else 0f),
-            horizontalArrangement = Arrangement.spacedBy(OtpBoxGap),
+            horizontalArrangement = Arrangement.spacedBy(calculatedGap),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             repeat(OTP_LENGTH) { index ->
-                val filled = index < code.length
-                val glowing = filled && state == OtpState.Idle
+                val isCurrent = index == code.length.coerceAtMost(OTP_LENGTH - 1)
+                val isFilled = index < code.length
+                val isFocused = isCurrent && code.length < OTP_LENGTH && state == OtpState.Idle
                 val borderColor = when (state) {
                     OtpState.Success -> palette.success
                     OtpState.Error -> palette.error
-                    OtpState.Idle -> if (filled) palette.glow.first() else palette.boxBorder
+                    OtpState.Idle -> when {
+                        isFocused -> Color(0xFFC7D2FE) // Bright highlighted focus border like reference
+                        isFilled -> Color(0xFF4338CA) // Subtle deep purple/indigo border
+                        else -> palette.boxBorder
+                    }
                 }
+                val borderWidth = if (isFocused) 2.dp else 1.dp
+
                 Box(
                     modifier = Modifier
-                        .size(OtpBoxWidth, OtpBoxHeight)
-                        .drawBehind {
-                            if (glowing) drawElectricGlow(phase, palette.glow, OtpBoxCorner.toPx())
-                        }
-                        .clip(RoundedCornerShape(OtpBoxCorner))
+                        .size(boxWidth, boxHeight)
+                        .clip(RoundedCornerShape(corner))
                         .background(palette.boxFill)
-                        .border(1.5.dp, borderColor, RoundedCornerShape(OtpBoxCorner)),
+                        .border(borderWidth, borderColor, RoundedCornerShape(corner)),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(
-                        text = code.getOrNull(index)?.toString().orEmpty(),
-                        style = TextStyle(
-                            fontSize = 26.sp,
-                            fontWeight = FontWeight.Bold,
-                            textAlign = TextAlign.Center,
-                        ),
-                        color = palette.text,
-                    )
+                    val char = code.getOrNull(index)?.toString().orEmpty()
+                    if (char.isNotEmpty()) {
+                        Text(
+                            text = char,
+                            style = TextStyle(
+                                fontSize = if (boxWidth < 40.dp) 20.sp else 24.sp,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center,
+                            ),
+                            color = palette.text,
+                        )
+                    } else if (isFocused) {
+                        // Animated pulsing cursor line matching reference
+                        Box(
+                            modifier = Modifier
+                                .width(2.dp)
+                                .height(22.dp)
+                                .alpha(if (phase > 0.5f) 1f else 0.2f)
+                                .background(Color(0xFF818CF8)),
+                        )
+                    }
                 }
             }
         }
@@ -254,6 +296,7 @@ fun EmailCodeVerification(
     resendCooldownSeconds: Int,
     onResend: () -> Unit,
     onVerify: (code: String, onResult: (errorMessage: String?) -> Unit) -> Unit,
+    onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val palette = otpPalette(dark)
@@ -263,6 +306,14 @@ fun EmailCodeVerification(
     var otpState by remember { mutableStateOf(OtpState.Idle) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var checking by remember { mutableStateOf(false) }
+
+    // Resets everything so the user gets a fresh set of empty boxes to retype
+    fun resetForRetry() {
+        code = ""
+        checking = false
+        otpState = OtpState.Idle
+        errorMessage = null
+    }
 
     fun updateCode(newCode: String) {
         code = newCode
@@ -282,77 +333,221 @@ fun EmailCodeVerification(
                     errorMessage = null
                 } else {
                     otpState = OtpState.Error
-                    errorMessage = error
+                    errorMessage = "Invalid or expired code."
                 }
             }
         }
     }
 
-    Column(
-        modifier = modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+    // 15-second safety timeout: if the server never responds, unblock the user
+    LaunchedEffect(checking) {
+        if (checking) {
+            delay(15_000)
+            if (checking) {
+                checking = false
+                otpState = OtpState.Error
+                errorMessage = "Verification timed out. Please try again."
+            }
+        }
+    }
+
+    val cardBg = if (dark) Color(0xFF0C1021) else Color.White
+    val cardBorder = if (dark) Color(0xFF1E2648) else Color(0xFFE2E8F0)
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .widthIn(max = 420.dp)
+            .clip(RoundedCornerShape(28.dp))
+            .background(cardBg)
+            .border(1.dp, cardBorder, RoundedCornerShape(28.dp))
+            .padding(horizontal = 20.dp, vertical = 28.dp),
+        contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = "Enter the 6-digit code sent to",
-            style = MaterialTheme.typography.bodySmall,
-            color = palette.muted,
-        )
-        Text(
-            text = email,
-            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-            color = ink,
-        )
-        if (notice != null) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            // Lock artwork with subtle ambient glow matching reference
+            Box(
+                modifier = Modifier
+                    .size(92.dp)
+                    .drawBehind {
+                        drawCircle(
+                            brush = Brush.radialGradient(
+                                colors = listOf(Color(0xFF6366F1).copy(alpha = 0.35f), Color.Transparent),
+                                radius = size.width,
+                            ),
+                        )
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Lock,
+                    contentDescription = null,
+                    tint = Color(0xFFC7D2FE),
+                    modifier = Modifier.size(54.dp),
+                )
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            // Main Title matching reference "6 digit code"
             Text(
-                text = notice,
-                style = MaterialTheme.typography.bodySmall,
-                color = palette.muted,
+                text = "6 digit code",
+                style = TextStyle(
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    letterSpacing = (-0.3).sp,
+                ),
                 textAlign = TextAlign.Center,
             )
-        }
 
-        Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
-        OtpCodeEntry(
-            code = code,
-            onCodeChange = { updateCode(it) },
-            state = otpState,
-            dark = dark,
-        )
-
-        Text(
-            text = when (otpState) {
-                OtpState.Success -> "Email verified"
-                OtpState.Error -> errorMessage ?: "Invalid code"
-                OtpState.Idle -> if (checking) "Checking…" else ""
-            },
-            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-            color = when (otpState) {
-                OtpState.Success -> palette.success
-                OtpState.Error -> palette.error
-                OtpState.Idle -> palette.muted
-            },
-            textAlign = TextAlign.Center,
-        )
-
-        val canResend = resendCooldownSeconds == 0 && otpState != OtpState.Success
-        Box(
-            modifier = Modifier
-                .clip(CircleShape)
-                .background(palette.chip)
-                .clickable(
-                    enabled = canResend,
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                ) { onResend() }
-                .padding(horizontal = 14.dp, vertical = 8.dp),
-        ) {
+            // Subtitle matching reference
             Text(
-                text = if (canResend) "Send new code" else "Resend (${resendCooldownSeconds}s)",
-                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                color = if (canResend) palette.accent else palette.muted,
+                text = "Please enter 6 digit verification code\nsent to $email",
+                style = TextStyle(
+                    fontSize = 13.sp,
+                    color = Color(0xFF94A3B8),
+                    lineHeight = 18.sp,
+                    textAlign = TextAlign.Center,
+                ),
             )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Responsive 6 boxes — disabled while a verify request is in-flight
+            OtpCodeEntry(
+                code = code,
+                onCodeChange = { updateCode(it) },
+                state = otpState,
+                dark = dark,
+                enabled = !checking,
+            )
+
+            // Verifying spinner — shown while awaiting server response
+            if (checking) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = Color(0xFF818CF8),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Verifying…",
+                        style = TextStyle(
+                            fontSize = 13.sp,
+                            color = Color(0xFF94A3B8),
+                        ),
+                    )
+                }
+            }
+
+            // Error state: show message + explicit "Try Again" button
+            if (otpState == OtpState.Error) {
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Text(
+                    text = errorMessage ?: "Invalid or expired code.",
+                    style = TextStyle(
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = palette.error,
+                        textAlign = TextAlign.Center,
+                    ),
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Prominent "Try Again" button — clears boxes and refocuses keyboard
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            Brush.linearGradient(
+                                listOf(Color(0xFFEF4444).copy(alpha = 0.15f), Color(0xFFF87171).copy(alpha = 0.10f))
+                            )
+                        )
+                        .border(1.dp, palette.error.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                        ) { resetForRetry() }
+                        .padding(vertical = 12.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "Try Again",
+                        style = TextStyle(
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = palette.error,
+                            letterSpacing = 0.3.sp,
+                        ),
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Resend footer — only shown in Idle (not during error; user already got a code)
+            if (otpState == OtpState.Idle) {
+                val onCooldown = resendCooldownSeconds > 0
+                val resendEnabled = !checking && !onCooldown
+                Row(
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        text = "Didn't receive code? ",
+                        style = TextStyle(fontSize = 13.sp, color = Color(0xFF94A3B8)),
+                    )
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable(
+                                enabled = resendEnabled,
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                            ) { onResend() }
+                            .padding(horizontal = 6.dp, vertical = 8.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = if (onCooldown) "Resend (${resendCooldownSeconds}s)" else "Resend",
+                            style = TextStyle(
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (resendEnabled) Color(0xFF818CF8) else Color(0xFF4B5563),
+                            ),
+                        )
+                    }
+                }
+            }
+
+            if (onBack != null && otpState != OtpState.Success) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Change details",
+                    style = TextStyle(
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFF64748B),
+                    ),
+                    modifier = Modifier.clickable { onBack() },
+                )
+            }
         }
     }
 }

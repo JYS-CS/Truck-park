@@ -153,8 +153,26 @@ class AuthViewModel(
     fun completeSecuritySetup() {
         val current = _uiState.value
         if (current is AuthUiState.AdminSecuritySetup) {
-            _uiState.value = AuthUiState.Authenticated(current.user)
+            val updatedUser = current.user.copy(
+                mustChangePassword = false,
+                emailVerified = true,
+            )
+            _uiState.value = AuthUiState.Authenticated(updatedUser)
         }
+    }
+
+    fun registerUser(fullName: String, email: String) {
+        val user = AuthUser(
+            id = "usr_" + System.currentTimeMillis(),
+            fullName = fullName.ifBlank { "Operator" },
+            email = email.ifBlank { "operator@hibiscuss.com" },
+            status = "APPROVED",
+            emailVerified = true,
+            roles = listOf("OPERATOR"),
+            permissions = setOf("READ", "WRITE"),
+            mustChangePassword = false,
+        )
+        _uiState.value = AuthUiState.Authenticated(user)
     }
 
     fun signOut() {

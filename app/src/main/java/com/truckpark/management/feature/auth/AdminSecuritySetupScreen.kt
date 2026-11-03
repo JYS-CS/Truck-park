@@ -112,7 +112,9 @@ fun AdminSecuritySetupScreen(
     // false = credentials page, true = email verification page (separate screen)
     var onVerifyPage by rememberSaveable { mutableStateOf(initialPasswordChanged) }
     var newPassword by remember { mutableStateOf("") }
-    var newEmail by remember { mutableStateOf("") }
+    var newEmail by remember {
+        mutableStateOf(if (user.email.equals("admin@hibiscuss.com", ignoreCase = true)) "" else user.email)
+    }
     var isChangingPassword by remember { mutableStateOf(false) }
     var passwordError by remember { mutableStateOf<String?>(null) }
     var passwordSuccess by remember { mutableStateOf<String?>(null) }
@@ -133,90 +135,114 @@ fun AdminSecuritySetupScreen(
         }
     }
 
+    // When both password change and email verification are completed, proceed to dashboard
+    LaunchedEffect(passwordChanged, emailVerified) {
+        if (passwordChanged && emailVerified) {
+            delay(1200)
+            onSetupComplete()
+        }
+    }
+
     AppBackground {
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .imePadding(),
-            contentAlignment = Alignment.TopCenter,
+            contentAlignment = if (onVerifyPage) Alignment.Center else Alignment.TopCenter,
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(scrollState)
-                    .padding(horizontal = 24.dp, vertical = 32.dp),
+                    .padding(
+                        horizontal = 20.dp,
+                        vertical = if (onVerifyPage) 16.dp else 32.dp,
+                    ),
                 horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = if (onVerifyPage) Arrangement.Center else Arrangement.Top,
             ) {
-                // Top Brand Emblem
-                Image(
-                    painter = painterResource(id = R.drawable.hibiscus_emblem_trans),
-                    contentDescription = "Hibiscus Logo",
-                    modifier = Modifier.size(80.dp),
-                )
+                // Top Brand Emblem (step 1 only; verify screen has its own integrated lock artwork)
+                if (!onVerifyPage) {
+                    Image(
+                        painter = painterResource(id = R.drawable.hibiscus_emblem_trans),
+                        contentDescription = "Hibiscus Logo",
+                        modifier = Modifier.size(80.dp),
+                    )
 
-                Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
 
-                Image(
-                    painter = painterResource(
-                        id = if (dark) R.drawable.hibiscus_wordmark_trans else R.drawable.hibiscus_wordmark_light,
-                    ),
-                    contentDescription = "HIBISCUS",
-                    modifier = Modifier.width(160.dp),
-                )
+                    Image(
+                        painter = painterResource(
+                            id = if (dark) R.drawable.hibiscus_wordmark_trans else R.drawable.hibiscus_wordmark_light,
+                        ),
+                        contentDescription = "HIBISCUS",
+                        modifier = Modifier.width(160.dp),
+                    )
 
-                Spacer(modifier = Modifier.height(20.dp))
+                    Spacer(modifier = Modifier.height(20.dp))
+                }
 
-                // Title and subtitle
-                Text(
-                    text = "Security Checkpoint",
-                    style = MaterialTheme.typography.headlineMedium.copy(
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = (-0.5).sp,
-                    ),
-                    color = if (dark) Color.White else Color(0xFF0F172A),
-                    textAlign = TextAlign.Center,
-                )
+                // Title and subtitle (shown on step 1 only)
+                if (!onVerifyPage) {
+                    Text(
+                        text = "Admin Account Setup",
+                        style = MaterialTheme.typography.headlineMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = (-0.5).sp,
+                        ),
+                        color = if (dark) Color.White else Color(0xFF0F172A),
+                        textAlign = TextAlign.Center,
+                    )
 
-                Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
 
-                Text(
-                    text = "Administrator onboarding requirement: update your temporary password and verify your email before entering the command center.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (dark) Color(0xFF94A3B8) else Color(0xFF64748B),
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.widthIn(max = 420.dp),
-                )
+                    Text(
+                        text = "Set up your admin email and a new password to get started.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (dark) Color(0xFF94A3B8) else Color(0xFF64748B),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.widthIn(max = 420.dp),
+                    )
 
-                Spacer(modifier = Modifier.height(20.dp))
+                    Spacer(modifier = Modifier.height(20.dp))
 
-                // Administrator Info Card
-                AdminIdentityCard(
-                    user = user,
-                    passwordChanged = passwordChanged,
-                    emailVerified = emailVerified,
-                    dark = dark,
-                )
+                    // Administrator Info Card
+                    AdminIdentityCard(
+                        user = user,
+                        passwordChanged = passwordChanged,
+                        emailVerified = emailVerified,
+                        dark = dark,
+                    )
 
-                Spacer(modifier = Modifier.height(24.dp))
+                    Spacer(modifier = Modifier.height(24.dp))
+                }
 
                 // STEP 1: REPLACE DEFAULT EMAIL AND PASSWORD (its own page)
                 if (!onVerifyPage) {
                 SecuritySectionCard(
-                    title = "1. Update Administrator Details",
-                    subtitle = if (passwordChanged) "Secure administrator details configured" else "Replace the default email and password",
-                    isComplete = passwordChanged,
+                    title = "1. Update Your Credentials",
+                    subtitle = if (passwordChanged && emailVerified) "Credentials updated" else "Enter your new email and password",
+                    isComplete = passwordChanged && emailVerified,
                     dark = dark,
                 ) {
-                    if (passwordChanged) {
+                    if (passwordChanged && emailVerified) {
                         SecurityCompletedBanner(
                             title = "Password Secured",
                             subtitle = "Your account is secured with your custom password.",
                             dark = dark,
                         )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        SetupActionButton(
+                            text = "Continue to Dashboard →",
+                            isEnabled = true,
+                            isLoading = false,
+                            dark = dark,
+                            onClick = onSetupComplete,
+                        )
                     } else {
                         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                             Text(
-                                text = "This account still uses the default email and password. Replace both to continue.",
+                                text = "Please provide your personal email and choose a strong password.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = if (dark) Color(0xFF94A3B8) else Color(0xFF64748B),
                             )
@@ -227,7 +253,7 @@ fun AdminSecuritySetupScreen(
                                     newEmail = it
                                     passwordError = null
                                 },
-                                placeholder = "Your email address (not the default)",
+                                placeholder = "New email",
                                 icon = Icons.Default.Email,
                                 keyboardType = KeyboardType.Email,
                                 dark = dark,
@@ -239,7 +265,7 @@ fun AdminSecuritySetupScreen(
                                     newPassword = it
                                     passwordError = null
                                 },
-                                placeholder = "New secure password",
+                                placeholder = "New password",
                                 icon = Icons.Default.Lock,
                                 isPassword = true,
                                 dark = dark,
@@ -297,7 +323,7 @@ fun AdminSecuritySetupScreen(
                                                 viewModel.sendVerificationCode { codeResult ->
                                                     when (codeResult) {
                                                         is AuthResult.Success -> {
-                                                            resendCooldown = 60
+                                                            resendCooldown = 40
                                                             emailError = null
                                                             emailSuccess = "Verification code sent to ${newEmail.trim().lowercase()}"
                                                         }
@@ -323,21 +349,24 @@ fun AdminSecuritySetupScreen(
 
                 // STEP 2: VERIFY OFFICIAL EMAIL ADDRESS (its own page)
                 if (onVerifyPage) {
-                SecuritySectionCard(
-                    title = "2. Verify Administrator Email",
-                    subtitle = if (emailVerified) "Official email verified and active" else "Confirm access to ${user.email}",
-                    isComplete = emailVerified,
-                    dark = dark,
-                ) {
+                    val targetEmail = if (newEmail.isNotBlank()) newEmail.trim() else user.email
                     if (emailVerified) {
                         SecurityCompletedBanner(
                             title = "Email Confirmed",
-                            subtitle = "${user.email} is officially verified.",
+                            subtitle = "$targetEmail is officially verified.",
                             dark = dark,
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        SetupActionButton(
+                            text = "Continue to Dashboard →",
+                            isEnabled = true,
+                            isLoading = false,
+                            dark = dark,
+                            onClick = onSetupComplete,
                         )
                     } else {
                         EmailCodeVerification(
-                            email = user.email,
+                            email = targetEmail,
                             dark = dark,
                             notice = emailError ?: emailSuccess,
                             resendCooldownSeconds = resendCooldown,
@@ -346,9 +375,9 @@ fun AdminSecuritySetupScreen(
                                 viewModel.sendVerificationCode { codeResult ->
                                     when (codeResult) {
                                         is AuthResult.Success -> {
-                                            resendCooldown = 60
+                                            resendCooldown = 40
                                             emailError = null
-                                            emailSuccess = "Verification code sent to ${user.email}"
+                                            emailSuccess = "Verification code sent to $targetEmail"
                                         }
                                         is AuthResult.Failure -> {
                                             emailSuccess = null
@@ -362,20 +391,25 @@ fun AdminSecuritySetupScreen(
                                     when (result) {
                                         is AuthResult.Success -> {
                                             onResult(null)
-                                            // Let the green success animation play before the page changes.
+                                            // Let the green success animation play before proceeding to dashboard
                                             scope.launch {
                                                 delay(900)
                                                 emailVerified = true
+                                                delay(800)
+                                                onSetupComplete()
                                             }
                                         }
                                         is AuthResult.Failure -> onResult(result.error.message)
                                     }
                                 }
                             },
+                            onBack = {
+                                onVerifyPage = false
+                                emailError = null
+                                emailSuccess = null
+                            },
                         )
                     }
-                }
-
                 }
 
                 Spacer(modifier = Modifier.height(24.dp))
