@@ -32,11 +32,21 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material3.Icon
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import com.truckpark.management.R
 import com.truckpark.management.core.common.ThemeMode
 import com.truckpark.management.core.designsystem.components.GlassCard
 import com.truckpark.management.core.designsystem.icons.TruckParkIcons
+import com.truckpark.management.domain.models.AuthUser
 
 @Composable
 fun MoreScreen(themeMode: ThemeMode, onThemeModeSelected: (ThemeMode) -> Unit) {
@@ -212,6 +222,9 @@ fun MoreOptionsBottomSheet(
     onDismissRequest: () -> Unit,
     themeMode: ThemeMode,
     onThemeModeSelected: (ThemeMode) -> Unit,
+    user: AuthUser? = null,
+    onRefreshRole: () -> Unit = {},
+    onSignOut: () -> Unit = {},
 ) {
     if (visible) {
         val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -239,39 +252,145 @@ fun MoreOptionsBottomSheet(
                         .padding(bottom = 48.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
-                // Theme Mode Selection
-                ThemeModeSelector(
-                    selected = themeMode,
-                    onSelected = onThemeModeSelected,
-                )
+                    if (user != null) {
+                        GlassCard(Modifier.fillMaxWidth()) {
+                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(44.dp)
+                                            .clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Person,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(24.dp),
+                                        )
+                                    }
 
-                // About Card with clear, high-contrast text
-                GlassCard(Modifier.fillMaxWidth()) {
-                    Text(
-                        text = stringResource(R.string.about_title),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        ) {
+                                            Text(
+                                                text = user.fullName.ifBlank { "Operator" },
+                                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                            )
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(999.dp))
+                                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f))
+                                                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                                            ) {
+                                                Text(
+                                                    text = user.primaryRole,
+                                                    style = MaterialTheme.typography.labelSmall.copy(
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 10.sp,
+                                                    ),
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                )
+                                            }
+                                        }
+                                        Text(
+                                            text = user.email,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f))
+                                        .border(
+                                            width = 1.dp,
+                                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.30f),
+                                            shape = RoundedCornerShape(12.dp),
+                                        )
+                                        .clickable {
+                                            onRefreshRole()
+                                            onDismissRequest()
+                                        }
+                                        .padding(vertical = 10.dp, horizontal = 14.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(
+                                        text = "Sync Role & Permissions",
+                                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Theme Mode Selection
+                    ThemeModeSelector(
+                        selected = themeMode,
+                        onSelected = onThemeModeSelected,
                     )
-                    Spacer(Modifier.height(8.dp))
+
+                    // About Card with clear, high-contrast text
+                    GlassCard(Modifier.fillMaxWidth()) {
+                        Text(
+                            text = stringResource(R.string.about_title),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = stringResource(R.string.about_body),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f),
+                        )
+                    }
+
+                    // Sign Out Button
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Color(0xFFEF4444).copy(alpha = 0.14f))
+                            .border(
+                                width = 1.dp,
+                                color = Color(0xFFEF4444).copy(alpha = 0.45f),
+                                shape = RoundedCornerShape(16.dp),
+                            )
+                            .clickable(onClick = onSignOut)
+                            .padding(vertical = 14.dp, horizontal = 16.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "Sign Out",
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                            color = Color(0xFFEF4444),
+                        )
+                    }
+
+                    // Footer version note with high-contrast text
                     Text(
-                        text = stringResource(R.string.about_body),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f),
+                        text = "Truck Park v1.0.0 (Milestone 1)",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                     )
                 }
-
-                // Footer version note with high-contrast text
-                Text(
-                    text = "Truck Park v1.0.0 (Milestone 1)",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 4.dp),
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                )
             }
         }
     }
-}
 }

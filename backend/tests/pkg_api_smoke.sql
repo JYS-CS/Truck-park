@@ -59,13 +59,15 @@ BEGIN
   PKG_API.list_users('Bearer ' || v_token, NULL, v_status, v_body);
   check_that('admin can list pending users', v_status = 200);
 
-  -- Verification code test
-  PKG_API.send_verification_code('Bearer ' || v_token, v_status, v_body);
-  check_that('send verification code -> 200', v_status = 200);
-  check_that('send verification code returns code', JSON_VALUE(v_body, '$.code') IS NOT NULL);
+  PKG_API.list_devices('Bearer ' || v_token, v_status, v_body);
+  check_that('admin can list registered devices', v_status = 200);
 
-  PKG_API.verify_email(NULL, JSON_VALUE(v_body, '$.code'), 'Bearer ' || v_token, v_status, v_body);
-  check_that('verify email with code -> 200', v_status = 200);
+  -- Email availability check
+  PKG_API.check_email('admin@hibiscuss.com', v_status, v_body);
+  check_that('existing admin email -> 409', v_status = 409);
+
+  PKG_API.check_email('available.smoke.test@hibiscuss.com', v_status, v_body);
+  check_that('unused email -> 200', v_status = 200);
 
   PKG_API.logout('Bearer ' || v_token, v_status, v_body);
   check_that('logout -> 200', v_status = 200);

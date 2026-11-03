@@ -28,6 +28,14 @@ CREATE OR REPLACE PACKAGE PKG_API AS
     p_token IN VARCHAR2, p_full_name IN VARCHAR2, p_password IN VARCHAR2,
     p_status OUT NUMBER, p_body OUT CLOB);
 
+  PROCEDURE check_email(
+    p_email IN VARCHAR2,
+    p_status OUT NUMBER, p_body OUT CLOB);
+
+  PROCEDURE request_signup_code(
+    p_email IN VARCHAR2, p_full_name IN VARCHAR2 DEFAULT NULL,
+    p_status OUT NUMBER, p_body OUT CLOB);
+
   PROCEDURE register(
     p_full_name IN VARCHAR2, p_email IN VARCHAR2, p_phone IN VARCHAR2 DEFAULT NULL,
     p_password IN VARCHAR2, p_code IN VARCHAR2 DEFAULT NULL,
@@ -40,7 +48,17 @@ CREATE OR REPLACE PACKAGE PKG_API AS
 
   PROCEDURE send_verification_code(
     p_authorization IN VARCHAR2,
-    p_code IN VARCHAR2 DEFAULT NULL,
+    p_email IN VARCHAR2 DEFAULT NULL,
+    p_status OUT NUMBER, p_body OUT CLOB);
+
+  PROCEDURE request_password_reset(
+    p_email IN VARCHAR2,
+    p_status OUT NUMBER, p_body OUT CLOB);
+
+  PROCEDURE reset_password(
+    p_email IN VARCHAR2,
+    p_code IN VARCHAR2,
+    p_new_password IN VARCHAR2,
     p_status OUT NUMBER, p_body OUT CLOB);
 
   -- Signed in (p_authorization is the raw "Authorization" header) ----------
@@ -48,6 +66,7 @@ CREATE OR REPLACE PACKAGE PKG_API AS
     p_authorization IN VARCHAR2,
     p_new_email IN VARCHAR2,
     p_new_password IN VARCHAR2,
+    p_code IN VARCHAR2 DEFAULT NULL,
     p_status OUT NUMBER, p_body OUT CLOB);
 
   PROCEDURE logout(
@@ -77,6 +96,10 @@ CREATE OR REPLACE PACKAGE PKG_API AS
 
   PROCEDURE deactivate_user(
     p_authorization IN VARCHAR2, p_user_id IN VARCHAR2, p_deactivate_at IN VARCHAR2,
+    p_status OUT NUMBER, p_body OUT CLOB);
+
+  PROCEDURE list_devices(
+    p_authorization IN VARCHAR2,
     p_status OUT NUMBER, p_body OUT CLOB);
 
   PROCEDURE revoke_device(

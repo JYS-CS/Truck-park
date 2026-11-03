@@ -1,7 +1,7 @@
 # Identity and Access Management (IAM) Specification
 
-Status: **Specification & Architecture Blueprint**  
-Parent Architecture: [BACKEND.md](file:///home/falcon/Desktop/TruckPark/BACKEND.md)  
+Status: **Implemented & Active**
+Parent Architecture: [BACKEND.md](file:///sdcard/project/TruckPark/BACKEND.md)
 Target Platform: Oracle Autonomous Database (ADB) + Oracle REST Data Services (ORDS)
 
 ---
@@ -11,12 +11,12 @@ Target Platform: Oracle Autonomous Database (ADB) + Oracle REST Data Services (O
 This document defines the complete **Identity and Access Management (IAM)** system for the TruckPark platform.
 
 ### Core Principles
-1. **Zero Client Trust**: All permission checks, role validations, password evaluations, and session states are evaluated inside the database via PL/SQL packages (`PKG_AUTHZ`, `PKG_AUTH`). Client applications (Android app or Admin Web console) only render UI reflecting these server-enforced rules.
-2. **Invite-Only Closed System**: Self-registration is disabled. Users cannot register without an active, Admin-generated single-use invitation.
-3. **Dual-Gate Verification & Approval**: Account creation requires both cryptographic email verification (6-digit code) and manual administrator sign-off before any operational access is granted.
+1. **Zero Client Trust**: All permission checks, role validations, password evaluations, and session states are evaluated inside the database via PL/SQL packages (`PKG_AUTHZ`, `PKG_AUTH`, `PKG_API`). Client applications only render UI reflecting these server-enforced rules.
+2. **Pre-Verification Account Hygiene**: Unverified accounts never pollute `users` or `auth_identities`. Both self-registration (`auth/request-signup-code` → `auth/register`) and Admin Security Setup (`auth/send-verification-code` → `auth/change-password`) generate and verify a 6-digit OTP on the server before writing user credentials.
+3. **Default `RUNNER` Auto-Approval & Dynamic Role Elevation**: Upon verifying their email, self-registered staff are automatically approved (`status = 'APPROVED'`) with the default `RUNNER` role and signed in immediately. Administrators can promote or reassign any staff member (`RUNNER`, `SUPERVISOR`, `ADMIN`) from the Admin workspace, dynamically adapting their UI and permissions.
 4. **Opaque Database Sessions Over Stateless JWTs**: Access and refresh tokens are opaque 256-bit random tokens stored as SHA-256 hashes in the database. This guarantees **instant revocation** across all devices without waiting for a token expiry window.
 5. **Hardware Device Binding**: Sessions belong to a specific registered mobile device. Revoking a lost, stolen, or reassigned device immediately terminates all active sessions on that device.
-6. **Immutable Audit Trail**: All authentication events, permission alterations, approval actions, and revocations are recorded in an append-only audit log.
+6. **Immutable Audit Trail**: All authentication events, permission alterations, role updates, and revocations are recorded in an append-only audit log (`audit_events`).
 
 ```
 ┌─────────────────────────┐
@@ -44,58 +44,51 @@ This document defines the complete **Identity and Access Management (IAM)** syst
 
 ---
 
-## 2. User Lifecycle & Onboarding Workflow
+## 2. User Lifecycle & Onboarding Workflows
 
-The complete journey of a user account follows 5 distinct states:
+The platform supports both **Self-Service Registration** (with pre-registration email verification and default `RUNNER` auto-approval) and **Admin Invitation**, plus a mandatory **Bootstrap Admin Security Setup Gate**.
 
 ```
-[ADMIN INVITE] ──▶ [INVITED]
-                       │
-                       ▼ User sets password
-             [PENDING_VERIFICATION]
-                       │
-                       ▼ 6-digit email code confirmed
-              [PENDING_APPROVAL]
-                       │
-         ┌─────────────┴─────────────┐
-         ▼ Admin Approves            ▼ Admin Rejects
-    [APPROVED]                  [REJECTED]
-         │
-         ▼ Admin Deactivates
-   [DEACTIVATED]
+[CREATE ACCOUNT]
+       │
+       ▼ POST /auth/request-signup-code
+  Checks email not in `users` (409 if taken)
+  Stores SHA-256(6-digit code) in `email_outbox` & sends via Brevo
+       │
+       ▼ User enters 6-digit code -> POST /auth/register
+  Verifies code hash -> Inserts `users` (APPROVED) + `auth_identities` + `user_roles` (RUNNER)
+       │
+       ▼ Auto-Signs In as RUNNER
+  [APPROVED (RUNNER)]
+       │
+       ├──▶ Admin Updates Role (/admin/users/{id}/approve) ──▶ [RUNNER | SUPERVISOR | ADMIN]
+       │
+       └──▶ Admin Deactivates (/admin/users/{id}/deactivate) ──▶ [DEACTIVATED]
 ```
 
-### Step 1: Admin Invitation
-- An Administrator creates an invite for a specific email address and pre-assigns a proposed role (`RUNNER`, `SUPERVISOR`, or `ADMIN`).
-- An unguessable 256-bit token is generated. The database stores only the **SHA-256 hash** of this token in `invites`.
-- An email is queued to Brevo containing the invite link: `https://<domain>/auth/accept-invite?token=<raw_token>`.
-- **Expiry**: Default is **72 hours** (configurable). Once used or expired, the link becomes invalid.
+### Workflow A: Self-Service Registration (Default `RUNNER`)
+1. **Email Availability & Pre-Signup OTP (`POST /auth/request-signup-code`)**:
+   - When the user presses **Create Account**, the server validates the email and checks `users`. If the email already exists, it returns `409 ALREADY_EXISTS` immediately so the user never enters the verification screen for a taken email.
+   - If the email is available, `PKG_API` generates a 6-digit numeric code (`DBMS_CRYPTO.RANDOMBYTES`), stores only its SHA-256 hash and 15-minute expiry in `email_outbox` (`template = 'VERIFY_SIGNUP'`), and dispatches the code via Brevo. **No row is created in `users` or `auth_identities` yet.**
+2. **Code Verification & Account Creation (`POST /auth/register`)**:
+   - The user submits the 6-digit code along with their full name, email, phone, and password.
+   - `PKG_API.register` verifies the code against `email_outbox` (valid for 15 minutes, max 5 failed attempts).
+   - Once verified, the server creates the `users` row with `status = 'APPROVED'`, `email_verified_at = SYSTIMESTAMP`, and `phone`, stores the PBKDF2 password hash in `auth_identities`, and assigns the default `RUNNER` role in `user_roles`.
+   - The Android client immediately signs the user into the Runner workspace.
 
-### Step 2: Accepting Invitation & Password Setup
-- The invitee opens the link, enters their full name, and provides a password.
-- **Strict Password Requirements**:
-  - Minimum 8 characters (maximum 100).
-  - At least one uppercase letter (`A-Z`).
-  - At least one lowercase letter (`a-z`).
-  - At least one numeric digit (`0-9`).
-  - At least one special symbol (`!@#$%^&*()_+-=[]{}|;:,.<>?` etc.).
-  - Free of null bytes (`\0`) and dangerous control characters.
-- The password is hashed using **PBKDF2-HMAC-SHA-256** with a unique 16-byte cryptographically secure salt.
-- The user account is created with status: `PENDING_VERIFICATION`.
+### Workflow B: Bootstrap Admin Security Setup Gate
+1. The database seeds the initial administrator as `admin@hibiscuss.com` (password: `@Admin`, `must_change_password = 1`, `email_verified_at = NULL`).
+2. When signing in with this account, `login` returns `must_change_password: true`, routing the app to `AdminSecuritySetupScreen`.
+3. Entering a new admin email and password calls `POST /auth/send-verification-code`, which checks that the new email is not taken and sends a 6-digit code via Brevo without modifying `users`.
+4. Entering the 6-digit code calls `POST /auth/change-password`, which verifies the code on the server before updating `users.email`, `email_verified_at`, and `auth_identities` (`must_change_password = 0`).
 
-### Step 3: Email Verification (One-Time Code)
-- A 6-digit numeric verification code is generated, hashed with SHA-256, and stored in `one_time_codes`.
-- The code is dispatched via transactional email.
-- **Rules**:
-  - Code validity: **15 minutes**.
-  - Maximum attempts: **5 failed attempts**; exceeding this invalidates the code and requires requesting a new code.
-- Upon successful verification, `email_verified_at` is set, and the account advances to `PENDING_APPROVAL`.
-
-### Step 4: Administrator Review & Role Confirmation
-- The account appears in the Administrator's `/admin/users?status=PENDING_APPROVAL` queue.
-- The Administrator inspects the user, confirms or adjusts the assigned role (`RUNNER`, `SUPERVISOR`, `ADMIN`), and executes `/admin/users/{id}/approve` or `/admin/users/{id}/reject`.
-- An automated transactional email notifies the applicant of the decision.
-- Only accounts with status `APPROVED` can obtain operational sessions.
+### Workflow C: Administrator Role Management & Optional Invitations
+- **Role Updates (`GET /admin/users` & `POST /admin/users/{id}/approve`)**:
+  - Administrators see all registered staff on the Admin Home tab and can switch any user's role between `RUNNER`, `SUPERVISOR`, and `ADMIN`.
+  - Role changes increment `users.permission_version`, write an immutable record to `audit_events`, and send a role-update notification email via Brevo.
+  - Staff can tap **Sync Role & Permissions** in the top-right menu (or re-open the app) to immediately adapt their bottom navigation tabs and workspace cards to their new role.
+- **Admin Invitations (`POST /admin/invites` → `POST /auth/accept-invite`)**:
+  - Administrators can also pre-invite an email with a proposed role (`RUNNER`, `SUPERVISOR`, `ADMIN`) using a 72-hour single-use token hashed with SHA-256 in `invites`.
 
 ### Step 5: Deactivation & Offboarding
 - Immediate deactivation (`status = 'DEACTIVATED'`) revokes all active sessions and refresh tokens across all devices immediately.

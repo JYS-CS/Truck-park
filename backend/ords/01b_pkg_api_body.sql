@@ -17,7 +17,270 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
   E_INVALID_REQUEST CONSTANT PLS_INTEGER := -20016;
   ISO_FMT           CONSTANT VARCHAR2(40) := 'YYYY-MM-DD"T"HH24:MI:SS"Z"';
 
+  -- =========================================================================
+  -- BREVO TRANSACTIONAL EMAIL CONFIGURATION (Server-Side Email Dispatch)
+  -- Copy your Brevo credentials from .env here before running in Oracle:
+  -- =========================================================================
+  C_SMTP_HOST         CONSTANT VARCHAR2(200) := 'smtp-relay.brevo.com';
+  C_SMTP_PORT         CONSTANT PLS_INTEGER   := 587;
+  C_SMTP_LOGIN        CONSTANT VARCHAR2(200) := ''; -- Set your BREVO_SMTP_LOGIN (e.g. 9b8c...@smtp-brevo.com)
+  C_SMTP_KEY          CONSTANT VARCHAR2(200) := ''; -- Set your BREVO_SMTP_KEY (xsmtpsib-... or xkeysib-...)
+  C_SMTP_SENDER_EMAIL CONSTANT VARCHAR2(200) := ''; -- Set your BREVO_SENDER_EMAIL
+  C_SMTP_SENDER_NAME  CONSTANT VARCHAR2(200) := 'Hibiscus TruckPark';
+  C_ADB_WALLET_PATH   CONSTANT VARCHAR2(200) := 'file:/var/opt/oracle/dbaas_acfs/grid/tcps_wallet';
+
   -- ---------------------------------------------------------------- helpers
+
+  FUNCTION generate_six_digit_code RETURN VARCHAR2 IS
+  BEGIN
+    RETURN LPAD(TO_CHAR(MOD(TO_NUMBER(RAWTOHEX(DBMS_CRYPTO.RANDOMBYTES(4)), 'XXXXXXXX'), 900000) + 100000), 6, '0');
+  END generate_six_digit_code;
+
+  FUNCTION base64_single_line(p_value IN VARCHAR2) RETURN VARCHAR2 IS
+  BEGIN
+    RETURN REPLACE(
+             REPLACE(
+               UTL_RAW.CAST_TO_VARCHAR2(
+                 UTL_ENCODE.BASE64_ENCODE(UTL_RAW.CAST_TO_RAW(p_value))),
+               CHR(13), ''),
+             CHR(10), '');
+  END base64_single_line;
+
+  PROCEDURE send_smtp_with_wallet(
+    p_wallet_path  IN VARCHAR2,
+    p_from_email   IN VARCHAR2,
+    p_to_email     IN VARCHAR2,
+    p_mime_message IN CLOB
+  ) IS
+    v_conn   UTL_SMTP.CONNECTION;
+    v_reply  UTL_SMTP.REPLY;
+    v_len    PLS_INTEGER := DBMS_LOB.GETLENGTH(p_mime_message);
+    v_offset PLS_INTEGER := 1;
+    c_chunk  CONSTANT PLS_INTEGER := 4000;
+  BEGIN
+    IF p_wallet_path IS NOT NULL THEN
+      v_conn := UTL_SMTP.OPEN_CONNECTION(
+        host                          => C_SMTP_HOST,
+        port                          => C_SMTP_PORT,
+        tx_timeout                    => 20,
+        wallet_path                   => p_wallet_path,
+        secure_connection_before_smtp => FALSE);
+    ELSE
+      v_conn := UTL_SMTP.OPEN_CONNECTION(
+        host                          => C_SMTP_HOST,
+        port                          => C_SMTP_PORT,
+        tx_timeout                    => 20,
+        secure_connection_before_smtp => FALSE);
+    END IF;
+
+    UTL_SMTP.EHLO(v_conn, 'hibiscustruckpark.com');
+    UTL_SMTP.STARTTLS(v_conn);
+    UTL_SMTP.EHLO(v_conn, 'hibiscustruckpark.com');
+
+    v_reply := UTL_SMTP.COMMAND(v_conn, 'AUTH LOGIN');
+    IF v_reply.code != 334 THEN
+      RAISE_APPLICATION_ERROR(-20016, 'SMTP AUTH LOGIN rejected (' || v_reply.code || ')');
+    END IF;
+
+    v_reply := UTL_SMTP.COMMAND(v_conn, base64_single_line(TRIM(C_SMTP_LOGIN)));
+    IF v_reply.code != 334 THEN
+      RAISE_APPLICATION_ERROR(-20016, 'SMTP username rejected (' || v_reply.code || ')');
+    END IF;
+
+    v_reply := UTL_SMTP.COMMAND(v_conn, base64_single_line(TRIM(C_SMTP_KEY)));
+    IF v_reply.code != 235 THEN
+      RAISE_APPLICATION_ERROR(-20016, 'SMTP authentication failed (' || v_reply.code || ')');
+    END IF;
+
+    UTL_SMTP.MAIL(v_conn, p_from_email);
+    UTL_SMTP.RCPT(v_conn, p_to_email);
+    UTL_SMTP.OPEN_DATA(v_conn);
+
+    WHILE v_offset <= v_len LOOP
+      UTL_SMTP.WRITE_DATA(v_conn, DBMS_LOB.SUBSTR(p_mime_message, c_chunk, v_offset));
+      v_offset := v_offset + c_chunk;
+    END LOOP;
+
+    UTL_SMTP.CLOSE_DATA(v_conn);
+    BEGIN
+      UTL_SMTP.QUIT(v_conn);
+    EXCEPTION
+      WHEN OTHERS THEN NULL;
+    END;
+  EXCEPTION
+    WHEN OTHERS THEN
+      BEGIN
+        UTL_SMTP.QUIT(v_conn);
+      EXCEPTION
+        WHEN OTHERS THEN NULL;
+      END;
+      RAISE;
+  END send_smtp_with_wallet;
+
+  PROCEDURE dispatch_transactional_email(
+    p_outbox_id      IN VARCHAR2,
+    p_to_email       IN VARCHAR2,
+    p_recipient_name IN VARCHAR2 DEFAULT NULL,
+    p_subject        IN VARCHAR2,
+    p_heading        IN VARCHAR2,
+    p_copy           IN VARCHAR2,
+    p_badge_label    IN VARCHAR2,
+    p_badge_value    IN VARCHAR2,
+    p_footer_note    IN VARCHAR2,
+    p_best_effort    IN BOOLEAN DEFAULT FALSE
+  ) IS
+    v_from_email    VARCHAR2(320) := TRIM(C_SMTP_SENDER_EMAIL);
+    v_to_email      VARCHAR2(320) := LOWER(TRIM(p_to_email));
+    v_greeting_name VARCHAR2(200) := NVL(NULLIF(TRIM(p_recipient_name), ''), 'there');
+    v_plain_body    CLOB;
+    v_html_body     CLOB;
+    v_mime_body     CLOB;
+    v_boundary      VARCHAR2(80) := '----=_Part_' || LOWER(RAWTOHEX(SYS_GUID()));
+    v_crlf          CONSTANT VARCHAR2(2) := CHR(13) || CHR(10);
+    v_err           VARCHAR2(500);
+    v_req           UTL_HTTP.REQ;
+    v_resp          UTL_HTTP.RESP;
+    v_json_payload  CLOB;
+  BEGIN
+    IF TRIM(C_SMTP_KEY) IS NULL OR v_from_email IS NULL THEN
+      IF p_best_effort THEN
+        RETURN;
+      END IF;
+      UPDATE email_outbox
+         SET status = 'FAILED',
+             last_error = 'Brevo credentials not configured in PKG_API',
+             updated_at = SYSTIMESTAMP
+       WHERE id = p_outbox_id;
+      RAISE_APPLICATION_ERROR(
+        E_INVALID_REQUEST,
+        'Server email service is not configured. Set C_SMTP_LOGIN, C_SMTP_KEY, and C_SMTP_SENDER_EMAIL in 01b_pkg_api_body.sql.');
+    END IF;
+
+    v_plain_body :=
+      'Hello ' || v_greeting_name || ',' || v_crlf || v_crlf ||
+      p_copy || v_crlf || v_crlf ||
+      p_badge_label || ': ' || p_badge_value || v_crlf || v_crlf ||
+      p_footer_note || v_crlf || v_crlf ||
+      '-- Hibiscus TruckPark Security' || v_crlf;
+
+    v_html_body :=
+      '<!DOCTYPE html><html><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /></head>' ||
+      '<body style="margin:0;padding:24px;background-color:#0B0F19;font-family:-apple-system,BlinkMacSystemFont,''Segoe UI'',Roboto,Helvetica,Arial,sans-serif;color:#F8FAFC;">' ||
+      '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:480px;margin:0 auto;background-color:#111827;border:1px solid #1E293B;border-radius:20px;padding:32px;">' ||
+      '<tr><td align="center">' ||
+      '<div style="font-size:12px;font-weight:700;letter-spacing:2px;color:#38BDF8;text-transform:uppercase;margin-bottom:8px;">HIBISCUS TRUCKPARK</div>' ||
+      '<h1 style="margin:0 0 12px 0;font-size:22px;font-weight:700;color:#FFFFFF;">' || p_heading || '</h1>' ||
+      '<p style="margin:0 0 24px 0;font-size:14px;line-height:22px;color:#94A3B8;">Hello ' || v_greeting_name || ',<br/>' || p_copy || '</p>' ||
+      '<div style="background-color:#0F172A;border:1px solid #334155;border-radius:14px;padding:20px 24px;margin-bottom:24px;">' ||
+      '<div style="font-size:11px;font-weight:600;letter-spacing:1.5px;color:#64748B;text-transform:uppercase;margin-bottom:8px;">' || p_badge_label || '</div>' ||
+      '<div style="font-size:24px;font-weight:800;letter-spacing:4px;color:#38BDF8;font-family:monospace;word-break:break-all;">' || p_badge_value || '</div>' ||
+      '</div>' ||
+      '<p style="margin:0;font-size:12px;line-height:18px;color:#64748B;">' || p_footer_note || '</p>' ||
+      '</td></tr></table></body></html>';
+
+    BEGIN
+      IF LOWER(TRIM(C_SMTP_KEY)) LIKE 'xkeysib-%' THEN
+        SELECT JSON_OBJECT(
+                 'sender'      VALUE JSON_OBJECT('name' VALUE C_SMTP_SENDER_NAME, 'email' VALUE v_from_email),
+                 'to'          VALUE JSON_ARRAY(JSON_OBJECT('email' VALUE v_to_email, 'name' VALUE v_greeting_name)),
+                 'subject'     VALUE p_subject,
+                 'textContent' VALUE v_plain_body,
+                 'htmlContent' VALUE v_html_body
+                 RETURNING CLOB)
+          INTO v_json_payload FROM dual;
+
+        v_req := UTL_HTTP.BEGIN_REQUEST('https://api.brevo.com/v3/smtp/email', 'POST', 'HTTP/1.1');
+        UTL_HTTP.SET_HEADER(v_req, 'api-key', TRIM(C_SMTP_KEY));
+        UTL_HTTP.SET_HEADER(v_req, 'Content-Type', 'application/json; charset=utf-8');
+        UTL_HTTP.SET_HEADER(v_req, 'Accept', 'application/json');
+        UTL_HTTP.SET_HEADER(v_req, 'Content-Length', TO_CHAR(LENGTHB(v_json_payload)));
+        UTL_HTTP.WRITE_TEXT(v_req, v_json_payload);
+        v_resp := UTL_HTTP.GET_RESPONSE(v_req);
+        UTL_HTTP.END_RESPONSE(v_resp);
+
+        IF v_resp.status_code NOT BETWEEN 200 AND 299 THEN
+          RAISE_APPLICATION_ERROR(-20016, 'Brevo HTTP API returned status ' || v_resp.status_code);
+        END IF;
+      ELSE
+        IF TRIM(C_SMTP_LOGIN) IS NULL THEN
+          RAISE_APPLICATION_ERROR(E_INVALID_REQUEST, 'C_SMTP_LOGIN is required when using a Brevo SMTP key.');
+        END IF;
+
+        v_mime_body :=
+          'From: "' || C_SMTP_SENDER_NAME || '" <' || v_from_email || '>' || v_crlf ||
+          'To: <' || v_to_email || '>' || v_crlf ||
+          'Subject: ' || p_subject || v_crlf ||
+          'MIME-Version: 1.0' || v_crlf ||
+          'Content-Type: multipart/alternative; boundary="' || v_boundary || '"' || v_crlf ||
+          v_crlf ||
+          '--' || v_boundary || v_crlf ||
+          'Content-Type: text/plain; charset=UTF-8' || v_crlf ||
+          'Content-Transfer-Encoding: 8bit' || v_crlf ||
+          v_crlf ||
+          v_plain_body || v_crlf ||
+          '--' || v_boundary || v_crlf ||
+          'Content-Type: text/html; charset=UTF-8' || v_crlf ||
+          'Content-Transfer-Encoding: 8bit' || v_crlf ||
+          v_crlf ||
+          v_html_body || v_crlf ||
+          '--' || v_boundary || '--' || v_crlf;
+
+        BEGIN
+          send_smtp_with_wallet(NULL, v_from_email, v_to_email, v_mime_body);
+        EXCEPTION
+          WHEN OTHERS THEN
+            send_smtp_with_wallet(C_ADB_WALLET_PATH, v_from_email, v_to_email, v_mime_body);
+        END;
+      END IF;
+
+      UPDATE email_outbox
+         SET status = 'SENT',
+             updated_at = SYSTIMESTAMP
+       WHERE id = p_outbox_id;
+    EXCEPTION
+      WHEN OTHERS THEN
+        v_err := SUBSTR(SQLERRM, 1, 450);
+        UPDATE email_outbox
+           SET status = 'FAILED',
+               last_error = v_err,
+               updated_at = SYSTIMESTAMP
+         WHERE id = p_outbox_id;
+        IF NOT p_best_effort THEN
+          RAISE_APPLICATION_ERROR(
+            E_INVALID_REQUEST,
+            'Could not send verification email (' || REGEXP_REPLACE(v_err, '^ORA-[0-9]+: ', '') || ')');
+        END IF;
+    END;
+  END dispatch_transactional_email;
+
+  PROCEDURE dispatch_verification_email(
+    p_outbox_id      IN VARCHAR2,
+    p_to_email       IN VARCHAR2,
+    p_code           IN VARCHAR2,
+    p_recipient_name IN VARCHAR2 DEFAULT NULL,
+    p_is_admin_setup IN BOOLEAN DEFAULT FALSE
+  ) IS
+    v_greeting_name VARCHAR2(200) := NVL(NULLIF(TRIM(p_recipient_name), ''),
+                                         CASE WHEN p_is_admin_setup THEN 'Administrator' ELSE 'there' END);
+  BEGIN
+    dispatch_transactional_email(
+      p_outbox_id      => p_outbox_id,
+      p_to_email       => p_to_email,
+      p_recipient_name => v_greeting_name,
+      p_subject        => CASE WHEN p_is_admin_setup
+                               THEN p_code || ' is your Hibiscus TruckPark Admin verification code'
+                               ELSE p_code || ' is your Hibiscus TruckPark verification code' END,
+      p_heading        => CASE WHEN p_is_admin_setup
+                               THEN 'Admin Account Security Setup'
+                               ELSE 'Verify Your Email Address' END,
+      p_copy           => CASE WHEN p_is_admin_setup
+                               THEN 'Use the 6-digit verification code below to confirm your official administrator email address and complete your security setup.'
+                               ELSE 'Use the 6-digit verification code below to verify your email address and submit your Hibiscus TruckPark account registration.' END,
+      p_badge_label    => '6-DIGIT VERIFICATION CODE',
+      p_badge_value    => p_code,
+      p_footer_note    => 'This code is valid for 15 minutes. Never share this verification code with anyone.',
+      p_best_effort    => FALSE);
+  END dispatch_verification_email;
 
   FUNCTION request_id RETURN VARCHAR2 IS
   BEGIN
@@ -126,15 +389,19 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
              'id'             VALUE u.id,
              'full_name'      VALUE u.full_name,
              'email'          VALUE u.email,
+             'phone'          VALUE u.phone,
              'status'         VALUE u.status,
-             'email_verified' VALUE CASE WHEN u.email_verified_at IS NOT NULL THEN 'true' ELSE 'false' END FORMAT JSON,
+             'email_verified' VALUE CASE WHEN u.email_verified_at IS NOT NULL AND LOWER(u.email) != 'admin@hibiscuss.com' THEN 'true' ELSE 'false' END FORMAT JSON,
              'roles'          VALUE COALESCE(
                  (SELECT JSON_ARRAYAGG(ur.role_code ORDER BY ur.role_code) FROM user_roles ur WHERE ur.user_id = u.id),
                  '[]') FORMAT JSON,
              'permissions'    VALUE v_per FORMAT JSON,
              'must_change_password' VALUE CASE WHEN EXISTS (
                  SELECT 1 FROM auth_identities ai
-                  WHERE ai.user_id = u.id AND ai.provider = 'PASSWORD' AND ai.password_must_change = 'Y')
+                  WHERE ai.user_id = u.id AND ai.provider = 'PASSWORD'
+                    AND (ai.password_must_change = 'Y'
+                         OR LOWER(u.email) = 'admin@hibiscuss.com'
+                         OR ai.password_hash = PKG_CRYPTO.hash_password('@Admin', ai.password_salt, ai.password_iters)))
                THEN 'true' ELSE 'false' END FORMAT JSON
              RETURNING CLOB)
       INTO v
@@ -225,18 +492,14 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
       p_offline_until => v_off, p_offline_sig => v_sig,
       p_user_id => v_uid, p_user_status => v_ustat);
 
-    -- Only approved staff get a working session. Others learn why and hold no token.
+    -- Only approved staff get a working session. Others hold no token and receive a generic 401
+    -- so attackers cannot enumerate account statuses.
     IF v_ustat != 'APPROVED' THEN
       PKG_AUTH.logout(v_sess);
       UPDATE refresh_tokens SET revoked_at = SYSTIMESTAMP
        WHERE token_hash = PKG_CRYPTO.hash_sha256(v_ref);
       COMMIT;
-      p_status := 403;
-      SELECT JSON_OBJECT('code' VALUE 'ACCOUNT_' || v_ustat,
-                         'message' VALUE 'Your account is ' || LOWER(REPLACE(v_ustat, '_', ' ')) || '.',
-                         'request_id' VALUE request_id RETURNING CLOB)
-        INTO p_body FROM dual;
-      RETURN;
+      RAISE_APPLICATION_ERROR(-20011, 'Invalid email or password');
     END IF;
 
     SELECT expires_at INTO v_exp FROM sessions
@@ -309,17 +572,142 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     WHEN OTHERS THEN fail(SQLCODE, SQLERRM, p_status, p_body);
   END accept_invite;
 
+  PROCEDURE check_email(
+    p_email IN VARCHAR2,
+    p_status OUT NUMBER, p_body OUT CLOB
+  ) IS
+    v_email VARCHAR2(320) := LOWER(TRIM(p_email));
+    v_count NUMBER;
+  BEGIN
+    IF NOT is_valid_email(v_email) THEN
+      bad_request('A valid email is required');
+    END IF;
+
+    SELECT COUNT(*) INTO v_count FROM users WHERE LOWER(email) = v_email;
+    IF v_count > 0 OR v_email = 'admin@hibiscuss.com' THEN
+      p_status := 409;
+      SELECT JSON_OBJECT(
+               'available'  VALUE false,
+               'code'       VALUE 'ALREADY_EXISTS',
+               'message'    VALUE 'An account with this email already exists.',
+               'request_id' VALUE request_id
+               RETURNING CLOB)
+        INTO p_body FROM dual;
+      RETURN;
+    END IF;
+
+    p_status := 200;
+    SELECT JSON_OBJECT(
+             'available'  VALUE true,
+             'request_id' VALUE request_id
+             RETURNING CLOB)
+      INTO p_body FROM dual;
+  EXCEPTION
+    WHEN OTHERS THEN fail(SQLCODE, SQLERRM, p_status, p_body);
+  END check_email;
+
+  PROCEDURE request_signup_code(
+    p_email IN VARCHAR2, p_full_name IN VARCHAR2 DEFAULT NULL,
+    p_status OUT NUMBER, p_body OUT CLOB
+  ) IS
+    v_email     VARCHAR2(320) := LOWER(TRIM(p_email));
+    v_count     NUMBER;
+    v_recent    NUMBER;
+    v_code      VARCHAR2(6);
+    v_code_hash VARCHAR2(64);
+    v_outbox_id VARCHAR2(36);
+    v_payload   CLOB;
+  BEGIN
+    IF NOT is_valid_email(v_email) THEN
+      bad_request('A valid email is required');
+    END IF;
+
+    -- Reject immediately if this email already exists in the database before sending any code
+    SELECT COUNT(*) INTO v_count
+      FROM users
+     WHERE LOWER(email) = v_email
+       AND status != 'PENDING_VERIFICATION';
+    IF v_count > 0 OR v_email = 'admin@hibiscuss.com' THEN
+      p_status := 409;
+      SELECT JSON_OBJECT(
+               'code'       VALUE 'ALREADY_EXISTS',
+               'message'    VALUE 'An account with this email already exists.',
+               'request_id' VALUE request_id
+               RETURNING CLOB)
+        INTO p_body FROM dual;
+      RETURN;
+    END IF;
+
+    -- Rate limit verification code requests per email per 15-minute window
+    SELECT COUNT(*) INTO v_recent
+      FROM email_outbox
+     WHERE to_address = v_email
+       AND template = 'VERIFY_SIGNUP'
+       AND created_at > SYSTIMESTAMP - INTERVAL '15' MINUTE;
+    IF v_recent >= 10 THEN
+      RAISE_APPLICATION_ERROR(E_INVALID_REQUEST, 'Please wait a few minutes before requesting another code');
+    END IF;
+
+    v_code      := generate_six_digit_code();
+    v_code_hash := PKG_CRYPTO.hash_sha256(v_code);
+    v_outbox_id := LOWER(RAWTOHEX(SYS_GUID()));
+
+    -- Supersede any previous active sign-up verification codes for this email
+    UPDATE email_outbox
+       SET row_version = 0,
+           updated_at  = SYSTIMESTAMP
+     WHERE to_address = v_email
+       AND template = 'VERIFY_SIGNUP'
+       AND row_version = 1;
+
+    SELECT JSON_OBJECT(
+             'code_hash'      VALUE v_code_hash,
+             'recipient_name' VALUE TRIM(p_full_name)
+             RETURNING CLOB)
+      INTO v_payload FROM dual;
+
+    -- Store only the SHA-256 hash and 15-minute expiry in email_outbox; users and auth_identities remain untouched
+    INSERT INTO email_outbox (
+      id, template, to_address, payload, status, attempts, next_try_at, row_version
+    ) VALUES (
+      v_outbox_id, 'VERIFY_SIGNUP', v_email, v_payload, 'SENDING', 0,
+      SYSTIMESTAMP + INTERVAL '15' MINUTE, 1
+    );
+
+    dispatch_verification_email(
+      p_outbox_id      => v_outbox_id,
+      p_to_email       => v_email,
+      p_code           => v_code,
+      p_recipient_name => TRIM(p_full_name),
+      p_is_admin_setup => FALSE);
+
+    SELECT JSON_OBJECT(
+             'status'     VALUE 'SENT',
+             'email'      VALUE v_email,
+             'message'    VALUE 'Verification code sent to ' || v_email,
+             'request_id' VALUE request_id
+             RETURNING CLOB)
+      INTO p_body FROM dual;
+    p_status := 200;
+    COMMIT;
+  EXCEPTION
+    WHEN OTHERS THEN fail(SQLCODE, SQLERRM, p_status, p_body);
+  END request_signup_code;
+
   PROCEDURE register(
     p_full_name IN VARCHAR2, p_email IN VARCHAR2, p_phone IN VARCHAR2 DEFAULT NULL,
     p_password IN VARCHAR2, p_code IN VARCHAR2 DEFAULT NULL,
     p_status OUT NUMBER, p_body OUT CLOB
   ) IS
-    v_email  VARCHAR2(320) := LOWER(TRIM(p_email));
-    v_uid    VARCHAR2(36);
-    v_ustat  VARCHAR2(30);
-    v_salt   RAW(16);
-    v_hash   VARCHAR2(255);
-    v_code   VARCHAR2(6);
+    v_email          VARCHAR2(320) := LOWER(TRIM(p_email));
+    v_uid            VARCHAR2(36);
+    v_ustat          VARCHAR2(30);
+    v_salt           RAW(16);
+    v_hash           VARCHAR2(255);
+    v_code           VARCHAR2(6);
+    v_code_hash      VARCHAR2(64);
+    v_total_attempts NUMBER;
+    v_match_count    NUMBER;
   BEGIN
     require_text(p_full_name, 'full_name', 200);
     IF LENGTH(TRIM(p_full_name)) < 2 THEN bad_request('full_name is too short'); END IF;
@@ -327,60 +715,106 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     IF NOT is_valid_password(p_password) THEN
       bad_request('Password needs 8+ characters with upper, lower, a number and a symbol');
     END IF;
+    IF p_code IS NULL OR NOT REGEXP_LIKE(TRIM(p_code), '^[0-9]{6}$') THEN
+      bad_request('A 6-digit confirmation code is required');
+    END IF;
 
+    v_code      := TRIM(p_code);
+    v_code_hash := PKG_CRYPTO.hash_sha256(v_code);
+
+    -- Check if email already belongs to an active/registered account
     BEGIN
-      SELECT id, status INTO v_uid, v_ustat FROM users WHERE email = v_email;
+      SELECT id, status INTO v_uid, v_ustat FROM users WHERE LOWER(email) = v_email;
       IF v_ustat != 'PENDING_VERIFICATION' THEN
-        RAISE_APPLICATION_ERROR(-1, 'An account with this email already exists');
+        p_status := 409;
+        SELECT JSON_OBJECT(
+                 'code'       VALUE 'ALREADY_EXISTS',
+                 'message'    VALUE 'An account with this email already exists.',
+                 'request_id' VALUE request_id
+                 RETURNING CLOB)
+          INTO p_body FROM dual;
+        RETURN;
       END IF;
-      -- Re-sending registration for an unverified account updates details and marks verified
-      UPDATE users
-         SET full_name = TRIM(p_full_name),
-             email_verified_at = SYSTIMESTAMP,
-             status = 'PENDING_APPROVAL',
+    EXCEPTION
+      WHEN NO_DATA_FOUND THEN
+        v_uid := NULL;
+    END;
+
+    -- Verify the 6-digit code on the server BEFORE inserting or modifying users / auth_identities
+    SELECT NVL(SUM(attempts), 0) INTO v_total_attempts
+      FROM email_outbox
+     WHERE to_address = v_email
+       AND template = 'VERIFY_SIGNUP'
+       AND created_at > SYSTIMESTAMP - INTERVAL '1' HOUR;
+    IF v_total_attempts >= 5 THEN
+      RAISE_APPLICATION_ERROR(-20013, 'Too many failed attempts. Please tap Resend for a new confirmation code.');
+    END IF;
+
+    SELECT COUNT(*) INTO v_match_count
+      FROM email_outbox
+     WHERE to_address = v_email
+       AND template = 'VERIFY_SIGNUP'
+       AND row_version = 1
+       AND next_try_at > SYSTIMESTAMP
+       AND JSON_VALUE(payload, '$.code_hash') = v_code_hash;
+
+    IF v_match_count = 0 THEN
+      UPDATE email_outbox
+         SET attempts   = attempts + 1,
              updated_at = SYSTIMESTAMP
+       WHERE to_address = v_email
+         AND template = 'VERIFY_SIGNUP'
+         AND row_version = 1;
+      RAISE_APPLICATION_ERROR(-20013, 'Invalid or expired confirmation code.');
+    END IF;
+
+    -- Mark verification code consumed
+    UPDATE email_outbox
+       SET row_version = 2,
+           updated_at  = SYSTIMESTAMP
+     WHERE to_address = v_email
+       AND template = 'VERIFY_SIGNUP'
+       AND row_version = 1;
+
+    -- Code is verified on the server: now create the user and auth_identities records (auto-approved as RUNNER)
+    IF v_uid IS NOT NULL THEN
+      UPDATE users
+         SET full_name         = TRIM(p_full_name),
+             phone             = SUBSTR(TRIM(p_phone), 1, 40),
+             email_verified_at = SYSTIMESTAMP,
+             status            = 'APPROVED',
+             updated_at        = SYSTIMESTAMP
        WHERE id = v_uid;
 
       v_salt := PKG_CRYPTO.generate_salt();
       v_hash := PKG_CRYPTO.hash_password(p_password, v_salt, 600000);
       UPDATE auth_identities
-         SET password_hash = v_hash,
-             password_salt = v_salt,
+         SET password_hash  = v_hash,
+             password_salt  = v_salt,
              password_iters = 600000,
-             updated_at = SYSTIMESTAMP
+             updated_at     = SYSTIMESTAMP
        WHERE user_id = v_uid AND provider = 'PASSWORD';
-    EXCEPTION
-      WHEN NO_DATA_FOUND THEN
-        v_uid := LOWER(RAWTOHEX(SYS_GUID()));
-        INSERT INTO users (id, full_name, email, email_verified_at, status)
-        VALUES (v_uid, TRIM(p_full_name), v_email, SYSTIMESTAMP, 'PENDING_APPROVAL');
-
-        v_salt := PKG_CRYPTO.generate_salt();
-        v_hash := PKG_CRYPTO.hash_password(p_password, v_salt, 600000);
-        INSERT INTO auth_identities (user_id, provider, password_hash, password_salt, password_iters)
-        VALUES (v_uid, 'PASSWORD', v_hash, v_salt, 600000);
-
-        INSERT INTO user_roles (user_id, role_code) VALUES (v_uid, 'RUNNER');
-    END;
-
-    IF p_code IS NOT NULL AND REGEXP_LIKE(TRIM(p_code), '^[0-9]{6}$') THEN
-      v_code := TRIM(p_code);
     ELSE
-      v_code := LPAD(TO_CHAR(MOD(TO_NUMBER(RAWTOHEX(DBMS_CRYPTO.RANDOMBYTES(4)), 'XXXXXXXX'), 900000) + 100000), 6, '0');
+      v_uid := LOWER(RAWTOHEX(SYS_GUID()));
+      INSERT INTO users (id, full_name, email, phone, email_verified_at, status)
+      VALUES (v_uid, TRIM(p_full_name), v_email, SUBSTR(TRIM(p_phone), 1, 40), SYSTIMESTAMP, 'APPROVED');
+
+      v_salt := PKG_CRYPTO.generate_salt();
+      v_hash := PKG_CRYPTO.hash_password(p_password, v_salt, 600000);
+      INSERT INTO auth_identities (user_id, provider, password_hash, password_salt, password_iters)
+      VALUES (v_uid, 'PASSWORD', v_hash, v_salt, 600000);
+
+      INSERT INTO user_roles (user_id, role_code) VALUES (v_uid, 'RUNNER');
     END IF;
 
-    UPDATE one_time_codes
-       SET used_at = SYSTIMESTAMP
-     WHERE user_id = v_uid AND purpose = 'VERIFY_EMAIL' AND used_at IS NULL;
-
     INSERT INTO one_time_codes (user_id, purpose, code_hash, expires_at, used_at)
-    VALUES (v_uid, 'VERIFY_EMAIL', PKG_CRYPTO.hash_sha256(v_code), SYSTIMESTAMP + INTERVAL '15' MINUTE, SYSTIMESTAMP);
+    VALUES (v_uid, 'VERIFY_EMAIL', v_code_hash, SYSTIMESTAMP + INTERVAL '15' MINUTE, SYSTIMESTAMP);
 
     SELECT JSON_OBJECT(
              'user_id'    VALUE v_uid,
              'email'      VALUE v_email,
-             'status'     VALUE 'PENDING_APPROVAL',
-             'code'       VALUE v_code,
+             'status'     VALUE 'APPROVED',
+             'role'       VALUE 'RUNNER',
              'request_id' VALUE request_id
              RETURNING CLOB)
       INTO p_body FROM dual;
@@ -410,11 +844,10 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
 
     PKG_AUTH.verify_email(v_target_user_id, p_code);
 
-    -- Ensure administrators remain APPROVED rather than demoted to PENDING_APPROVAL
+    -- Auto-approve verified accounts
     UPDATE users
        SET status = 'APPROVED'
-     WHERE id = v_target_user_id
-       AND EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = users.id AND ur.role_code = 'ADMIN');
+     WHERE id = v_target_user_id;
 
     SELECT status INTO v_final_status FROM users WHERE id = v_target_user_id;
 
@@ -433,16 +866,57 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
 
   PROCEDURE send_verification_code(
     p_authorization IN VARCHAR2,
-    p_code IN VARCHAR2 DEFAULT NULL,
+    p_email IN VARCHAR2 DEFAULT NULL,
     p_status OUT NUMBER, p_body OUT CLOB
   ) IS
-    v_user_id VARCHAR2(36);
-    v_email   VARCHAR2(320);
-    v_code    VARCHAR2(6);
-    v_recent  NUMBER;
+    v_user_id        VARCHAR2(36);
+    v_current_email  VARCHAR2(320);
+    v_full_name      VARCHAR2(200);
+    v_target_email   VARCHAR2(320);
+    v_code           VARCHAR2(6);
+    v_code_hash      VARCHAR2(64);
+    v_recent         NUMBER;
+    v_taken          NUMBER;
+    v_setup_flag     NUMBER;
+    v_is_admin_setup BOOLEAN;
+    v_outbox_id      VARCHAR2(36);
+    v_payload        CLOB;
   BEGIN
     PKG_AUTHZ.validate_session(bearer_token(p_authorization));
     v_user_id := PKG_AUTHZ.get_current_user_id();
+
+    SELECT email, full_name INTO v_current_email, v_full_name
+      FROM users
+     WHERE id = v_user_id;
+
+    IF p_email IS NOT NULL AND TRIM(p_email) IS NOT NULL THEN
+      v_target_email := LOWER(TRIM(p_email));
+      IF v_target_email = 'admin@hibiscuss.com' THEN
+        bad_request('Enter your official email address instead of the default setup email.');
+      END IF;
+    ELSE
+      v_target_email := LOWER(TRIM(v_current_email));
+    END IF;
+
+    IF NOT is_valid_email(v_target_email) THEN
+      bad_request('Enter a valid email address');
+    END IF;
+
+    -- Check that the target email is not already used by another user in the database
+    SELECT COUNT(*) INTO v_taken
+      FROM users
+     WHERE LOWER(email) = v_target_email
+       AND id <> v_user_id;
+    IF v_taken > 0 THEN
+      p_status := 409;
+      SELECT JSON_OBJECT(
+               'code'       VALUE 'ALREADY_EXISTS',
+               'message'    VALUE 'An account with this email already exists.',
+               'request_id' VALUE request_id
+               RETURNING CLOB)
+        INTO p_body FROM dual;
+      RETURN;
+    END IF;
 
     -- Rate limit verification code requests per 15-minute window
     SELECT COUNT(*) INTO v_recent
@@ -453,14 +927,19 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
       RAISE_APPLICATION_ERROR(-20016, 'Please wait a few minutes before requesting another code');
     END IF;
 
-    SELECT email INTO v_email FROM users WHERE id = v_user_id;
+    -- Determine from database state whether this user is undergoing Admin Security Setup
+    SELECT COUNT(*) INTO v_setup_flag
+      FROM users u
+      JOIN auth_identities ai ON ai.user_id = u.id AND ai.provider = 'PASSWORD'
+     WHERE u.id = v_user_id
+       AND (ai.password_must_change = 'Y'
+            OR LOWER(u.email) = 'admin@hibiscuss.com'
+            OR ai.password_hash = PKG_CRYPTO.hash_password('@Admin', ai.password_salt, ai.password_iters));
+    v_is_admin_setup := (v_setup_flag > 0);
 
-    -- Accept client-generated 6-digit code if provided, otherwise generate one
-    IF p_code IS NOT NULL AND REGEXP_LIKE(TRIM(p_code), '^[0-9]{6}$') THEN
-      v_code := TRIM(p_code);
-    ELSE
-      v_code := LPAD(TO_CHAR(MOD(TO_NUMBER(RAWTOHEX(DBMS_CRYPTO.RANDOMBYTES(4)), 'XXXXXXXX'), 900000) + 100000), 6, '0');
-    END IF;
+    v_code      := generate_six_digit_code();
+    v_code_hash := PKG_CRYPTO.hash_sha256(v_code);
+    v_outbox_id := LOWER(RAWTOHEX(SYS_GUID()));
 
     -- Expire previous un-used codes
     UPDATE one_time_codes
@@ -468,16 +947,47 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
      WHERE user_id = v_user_id AND purpose = 'VERIFY_EMAIL' AND used_at IS NULL;
 
     INSERT INTO one_time_codes (user_id, purpose, code_hash, expires_at)
-    VALUES (v_user_id, 'VERIFY_EMAIL', PKG_CRYPTO.hash_sha256(v_code), SYSTIMESTAMP + INTERVAL '15' MINUTE);
+    VALUES (v_user_id, 'VERIFY_EMAIL', v_code_hash, SYSTIMESTAMP + INTERVAL '15' MINUTE);
 
-    INSERT INTO email_outbox (template, to_address, payload)
-    VALUES ('VERIFY_EMAIL', LOWER(TRIM(v_email)), '{"code":"' || v_code || '"}');
+    -- Supersede previous pending verification outbox entries for this user
+    UPDATE email_outbox
+       SET row_version = 0,
+           updated_at  = SYSTIMESTAMP
+     WHERE template IN ('VERIFY_EMAIL', 'ADMIN_SETUP_VERIFY')
+       AND row_version = 1
+       AND JSON_VALUE(payload, '$.user_id') = v_user_id;
+
+    SELECT JSON_OBJECT(
+             'user_id'      VALUE v_user_id,
+             'target_email' VALUE v_target_email,
+             'code_hash'    VALUE v_code_hash
+             RETURNING CLOB)
+      INTO v_payload FROM dual;
+
+    INSERT INTO email_outbox (
+      id, template, to_address, payload, status, attempts, next_try_at, row_version
+    ) VALUES (
+      v_outbox_id,
+      CASE WHEN v_is_admin_setup THEN 'ADMIN_SETUP_VERIFY' ELSE 'VERIFY_EMAIL' END,
+      v_target_email,
+      v_payload,
+      'SENDING',
+      0,
+      SYSTIMESTAMP + INTERVAL '15' MINUTE,
+      1
+    );
+
+    dispatch_verification_email(
+      p_outbox_id      => v_outbox_id,
+      p_to_email       => v_target_email,
+      p_code           => v_code,
+      p_recipient_name => CASE WHEN v_is_admin_setup THEN 'Administrator' ELSE v_full_name END,
+      p_is_admin_setup => v_is_admin_setup);
 
     SELECT JSON_OBJECT(
              'status'     VALUE 'SENT',
-             'email'      VALUE v_email,
-             'code'       VALUE v_code,
-             'message'    VALUE 'Verification code sent to ' || v_email,
+             'email'      VALUE v_target_email,
+             'message'    VALUE 'Verification code sent to ' || v_target_email,
              'request_id' VALUE request_id
              RETURNING CLOB)
       INTO p_body FROM dual;
@@ -487,25 +997,207 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     WHEN OTHERS THEN fail(SQLCODE, SQLERRM, p_status, p_body);
   END send_verification_code;
 
+  PROCEDURE request_password_reset(
+    p_email IN VARCHAR2,
+    p_status OUT NUMBER, p_body OUT CLOB
+  ) IS
+    v_email     VARCHAR2(320) := LOWER(TRIM(p_email));
+    v_user_id   VARCHAR2(36);
+    v_full_name VARCHAR2(200);
+    v_ustat     VARCHAR2(30);
+    v_recent    NUMBER;
+    v_code      VARCHAR2(6);
+    v_code_hash VARCHAR2(64);
+    v_outbox_id VARCHAR2(36);
+    v_payload   CLOB;
+  BEGIN
+    IF NOT is_valid_email(v_email) THEN
+      bad_request('A valid email address is required');
+    END IF;
+
+    -- Always generate a code and SHA-256 hash upfront so both valid and invalid emails do the same work
+    v_code      := generate_six_digit_code();
+    v_code_hash := PKG_CRYPTO.hash_sha256(v_code);
+
+    IF v_email != 'admin@hibiscuss.com' THEN
+      BEGIN
+        SELECT id, full_name, status INTO v_user_id, v_full_name, v_ustat
+          FROM users
+         WHERE LOWER(email) = v_email;
+      EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+          v_user_id := NULL;
+      END;
+    END IF;
+
+    -- Only store a reset code and send an email if the account exists, is active, and is within rate limits.
+    -- Otherwise, silently skip sending and return the exact same 200 OK response (OWASP anti-enumeration).
+    IF v_user_id IS NOT NULL AND v_ustat NOT IN ('REJECTED', 'DEACTIVATED') THEN
+      SELECT COUNT(*) INTO v_recent
+        FROM one_time_codes
+       WHERE user_id = v_user_id
+         AND purpose = 'RESET_PASSWORD'
+         AND created_at > SYSTIMESTAMP - INTERVAL '15' MINUTE;
+
+      IF v_recent < 5 THEN
+        v_outbox_id := LOWER(RAWTOHEX(SYS_GUID()));
+
+        UPDATE one_time_codes
+           SET used_at = SYSTIMESTAMP
+         WHERE user_id = v_user_id AND purpose = 'RESET_PASSWORD' AND used_at IS NULL;
+
+        INSERT INTO one_time_codes (user_id, purpose, code_hash, expires_at)
+        VALUES (v_user_id, 'RESET_PASSWORD', v_code_hash, SYSTIMESTAMP + INTERVAL '15' MINUTE);
+
+        SELECT JSON_OBJECT(
+                 'user_id'   VALUE v_user_id,
+                 'code_hash' VALUE v_code_hash
+                 RETURNING CLOB)
+          INTO v_payload FROM dual;
+
+        INSERT INTO email_outbox (
+          id, template, to_address, payload, status, attempts, next_try_at, row_version
+        ) VALUES (
+          v_outbox_id, 'RESET_PASSWORD', v_email, v_payload, 'SENDING', 0,
+          SYSTIMESTAMP + INTERVAL '15' MINUTE, 1
+        );
+
+        dispatch_transactional_email(
+          p_outbox_id      => v_outbox_id,
+          p_to_email       => v_email,
+          p_recipient_name => v_full_name,
+          p_subject        => v_code || ' is your Hibiscus TruckPark password reset code',
+          p_heading        => 'Reset Your Password',
+          p_copy           => 'Use the 6-digit security code below to reset your Hibiscus TruckPark account password.',
+          p_badge_label    => '6-DIGIT RESET CODE',
+          p_badge_value    => v_code,
+          p_footer_note    => 'This code expires in 15 minutes. If you did not request a password reset, ignore this email.',
+          p_best_effort    => TRUE);
+      END IF;
+    END IF;
+
+    SELECT JSON_OBJECT(
+             'status'     VALUE 'SENT',
+             'email'      VALUE v_email,
+             'message'    VALUE 'Enter the 6-digit reset code sent to ' || v_email,
+             'request_id' VALUE request_id
+             RETURNING CLOB)
+      INTO p_body FROM dual;
+    p_status := 200;
+    COMMIT;
+  EXCEPTION
+    WHEN OTHERS THEN fail(SQLCODE, SQLERRM, p_status, p_body);
+  END request_password_reset;
+
+  PROCEDURE reset_password(
+    p_email IN VARCHAR2,
+    p_code IN VARCHAR2,
+    p_new_password IN VARCHAR2,
+    p_status OUT NUMBER, p_body OUT CLOB
+  ) IS
+    v_email          VARCHAR2(320) := LOWER(TRIM(p_email));
+    v_user_id        VARCHAR2(36);
+    v_code_hash      VARCHAR2(64);
+    v_total_attempts NUMBER;
+    v_match_count    NUMBER;
+    v_new_salt       RAW(16);
+    v_new_hash       VARCHAR2(255);
+  BEGIN
+    IF NOT is_valid_email(v_email) THEN
+      bad_request('A valid email address is required');
+    END IF;
+    IF p_code IS NULL OR NOT REGEXP_LIKE(TRIM(p_code), '^[0-9]{6}$') THEN
+      bad_request('A 6-digit reset code is required');
+    END IF;
+    IF NOT is_valid_password(p_new_password) OR p_new_password = '@Admin' THEN
+      bad_request('Password needs 8+ characters with uppercase, lowercase, a number and a symbol');
+    END IF;
+
+    -- Always compute the 600,000-iteration PBKDF2 hash and SHA-256 code hash upfront so
+    -- timing and error responses are identical whether or not the email exists (OWASP anti-enumeration).
+    v_code_hash := PKG_CRYPTO.hash_sha256(TRIM(p_code));
+    v_new_salt  := PKG_CRYPTO.generate_salt();
+    v_new_hash  := PKG_CRYPTO.hash_password(p_new_password, v_new_salt, 600000);
+
+    BEGIN
+      SELECT id INTO v_user_id FROM users WHERE LOWER(email) = v_email;
+    EXCEPTION
+      WHEN NO_DATA_FOUND THEN
+        RAISE_APPLICATION_ERROR(-20013, 'Invalid or expired reset code');
+    END;
+
+    SELECT NVL(SUM(attempts), 0) INTO v_total_attempts
+      FROM one_time_codes
+     WHERE user_id = v_user_id
+       AND purpose = 'RESET_PASSWORD'
+       AND created_at > SYSTIMESTAMP - INTERVAL '1' HOUR;
+    IF v_total_attempts >= 5 THEN
+      RAISE_APPLICATION_ERROR(-20013, 'Invalid or expired reset code');
+    END IF;
+
+    SELECT COUNT(*) INTO v_match_count
+      FROM one_time_codes
+     WHERE user_id = v_user_id
+       AND purpose = 'RESET_PASSWORD'
+       AND code_hash = v_code_hash
+       AND used_at IS NULL
+       AND expires_at > SYSTIMESTAMP;
+
+    IF v_match_count = 0 THEN
+      UPDATE one_time_codes
+         SET attempts = attempts + 1
+       WHERE user_id = v_user_id AND purpose = 'RESET_PASSWORD' AND used_at IS NULL;
+      RAISE_APPLICATION_ERROR(-20013, 'Invalid or expired reset code');
+    END IF;
+
+    UPDATE one_time_codes
+       SET used_at = SYSTIMESTAMP
+     WHERE user_id = v_user_id AND purpose = 'RESET_PASSWORD' AND code_hash = v_code_hash;
+
+    UPDATE auth_identities
+       SET password_hash        = v_new_hash,
+           password_salt        = v_new_salt,
+           password_iters       = 600000,
+           password_must_change = 'N',
+           failed_attempts      = 0,
+           locked_until         = NULL,
+           updated_at           = SYSTIMESTAMP
+     WHERE user_id = v_user_id AND provider = 'PASSWORD';
+
+    UPDATE sessions SET revoked_at = SYSTIMESTAMP WHERE user_id = v_user_id AND revoked_at IS NULL;
+    UPDATE users SET permission_version = permission_version + 1, updated_at = SYSTIMESTAMP WHERE id = v_user_id;
+
+    INSERT INTO audit_events (actor_user_id, action, target_type, target_id, reason)
+    VALUES (v_user_id, 'PASSWORD_RESET', 'USER', v_user_id, 'Password reset via email verification code');
+
+    p_body := ok_body;
+    p_status := 200;
+    COMMIT;
+  EXCEPTION
+    WHEN OTHERS THEN fail(SQLCODE, SQLERRM, p_status, p_body);
+  END reset_password;
+
   -- ------------------------------------------------------------- signed in
 
   PROCEDURE change_password(
     p_authorization IN VARCHAR2,
     p_new_email IN VARCHAR2,
     p_new_password IN VARCHAR2,
+    p_code IN VARCHAR2 DEFAULT NULL,
     p_status OUT NUMBER, p_body OUT CLOB
   ) IS
-    v_user_id    VARCHAR2(36);
-    v_hash       VARCHAR2(255);
-    v_salt       RAW(16);
-    v_iters      NUMBER;
-    v_calc_hash  VARCHAR2(255);
-    v_new_salt   RAW(16);
-    v_new_hash   VARCHAR2(255);
-    v_new_email  VARCHAR2(320);
-    v_taken      NUMBER;
-    v_must       VARCHAR2(1);
-    v_issued     TIMESTAMP WITH TIME ZONE;
+    v_user_id      VARCHAR2(36);
+    v_hash         VARCHAR2(255);
+    v_salt         RAW(16);
+    v_iters        NUMBER;
+    v_calc_hash    VARCHAR2(255);
+    v_new_salt     RAW(16);
+    v_new_hash     VARCHAR2(255);
+    v_new_email    VARCHAR2(320);
+    v_taken        NUMBER;
+    v_must         VARCHAR2(1);
+    v_issued       TIMESTAMP WITH TIME ZONE;
+    v_target_match NUMBER;
   BEGIN
     -- The signed-in session is the proof of identity for this setup step.
     PKG_AUTHZ.validate_session(bearer_token(p_authorization));
@@ -528,15 +1220,26 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
 
     -- New email is required: the default address cannot receive codes.
     v_new_email := LOWER(TRIM(p_new_email));
-    IF NOT is_valid_email(v_new_email) THEN
+    IF NOT is_valid_email(v_new_email) OR v_new_email = 'admin@hibiscuss.com' THEN
       bad_request('Enter a valid email address');
     END IF;
 
     SELECT COUNT(*) INTO v_taken
       FROM users
-     WHERE email = v_new_email AND id <> v_user_id;
+     WHERE LOWER(email) = v_new_email AND id <> v_user_id;
     IF v_taken > 0 THEN
-      bad_request('That email address is already in use');
+      p_status := 409;
+      SELECT JSON_OBJECT(
+               'code'       VALUE 'ALREADY_EXISTS',
+               'message'    VALUE 'An account with this email already exists.',
+               'request_id' VALUE request_id
+               RETURNING CLOB)
+        INTO p_body FROM dual;
+      RETURN;
+    END IF;
+
+    IF p_code IS NULL OR NOT REGEXP_LIKE(TRIM(p_code), '^[0-9]{6}$') THEN
+      bad_request('A 6-digit confirmation code is required');
     END IF;
 
     -- Fetch current stored credentials
@@ -553,10 +1256,11 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     -- Only accounts still undergoing initial setup (password_must_change = 'Y' OR email not yet verified)
     -- may use this step. Once fully verified and set up, changes require the standard change flow.
     DECLARE
-      v_verified_at TIMESTAMP WITH TIME ZONE;
+      v_verified_at   TIMESTAMP WITH TIME ZONE;
+      v_current_email VARCHAR2(320);
     BEGIN
-      SELECT email_verified_at INTO v_verified_at FROM users WHERE id = v_user_id;
-      IF v_must != 'Y' AND v_verified_at IS NOT NULL THEN
+      SELECT email_verified_at, LOWER(email) INTO v_verified_at, v_current_email FROM users WHERE id = v_user_id;
+      IF v_must != 'Y' AND v_verified_at IS NOT NULL AND v_current_email != 'admin@hibiscuss.com' THEN
         RAISE_APPLICATION_ERROR(-20003, 'Account setup is already complete');
       END IF;
     END;
@@ -566,6 +1270,28 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     IF (v_must = 'Y' AND v_calc_hash = v_hash) OR p_new_password = '@Admin' THEN
       bad_request('New password must be different from the default password');
     END IF;
+
+    -- Ensure the email being saved matches the address to which the verification code was sent
+    SELECT COUNT(*) INTO v_target_match
+      FROM email_outbox
+     WHERE template IN ('VERIFY_EMAIL', 'ADMIN_SETUP_VERIFY')
+       AND row_version = 1
+       AND JSON_VALUE(payload, '$.user_id') = v_user_id
+       AND LOWER(to_address) != v_new_email;
+    IF v_target_match > 0 THEN
+      RAISE_APPLICATION_ERROR(-20013, 'Email address changed after code was sent. Please request a new confirmation code.');
+    END IF;
+
+    -- Verify the 6-digit code on the server FIRST before updating users or auth_identities!
+    -- If invalid or expired, PKG_AUTH.verify_email increments attempts and raises -20013.
+    PKG_AUTH.verify_email(v_user_id, TRIM(p_code));
+
+    UPDATE email_outbox
+       SET row_version = 2,
+           updated_at  = SYSTIMESTAMP
+     WHERE template IN ('VERIFY_EMAIL', 'ADMIN_SETUP_VERIFY')
+       AND row_version = 1
+       AND JSON_VALUE(payload, '$.user_id') = v_user_id;
 
     -- Hash new password with fresh salt
     v_new_salt := PKG_CRYPTO.generate_salt();
@@ -581,10 +1307,12 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
            updated_at = SYSTIMESTAMP
      WHERE user_id = v_user_id AND provider = 'PASSWORD';
 
-    -- Switch to the admin's verified email once confirmed.
+    -- Switch to the admin's verified email and ensure ADMIN accounts stay APPROVED
     UPDATE users
        SET email = v_new_email,
            email_verified_at = SYSTIMESTAMP,
+           status = CASE WHEN EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = users.id AND ur.role_code = 'ADMIN')
+                         THEN 'APPROVED' ELSE status END,
            updated_at = SYSTIMESTAMP
      WHERE id = v_user_id;
 
@@ -638,25 +1366,49 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     p_authorization IN VARCHAR2, p_email IN VARCHAR2, p_proposed_role IN VARCHAR2,
     p_status OUT NUMBER, p_body OUT CLOB
   ) IS
-    v_token VARCHAR2(64);
-    v_exp   TIMESTAMP WITH TIME ZONE;
-    v_role  VARCHAR2(30) := UPPER(TRIM(p_proposed_role));
-    v_count NUMBER;
+    v_token     VARCHAR2(64);
+    v_exp       TIMESTAMP WITH TIME ZONE;
+    v_role      VARCHAR2(30) := UPPER(TRIM(p_proposed_role));
+    v_email     VARCHAR2(320) := LOWER(TRIM(p_email));
+    v_outbox_id VARCHAR2(36);
+    v_count     NUMBER;
   BEGIN
     PKG_AUTHZ.validate_session(bearer_token(p_authorization));
     PKG_AUTHZ.require_permission('user.invite');
 
-    IF NOT is_valid_email(LOWER(TRIM(p_email))) THEN bad_request('A valid email is required'); END IF;
+    IF NOT is_valid_email(v_email) THEN bad_request('A valid email is required'); END IF;
     SELECT COUNT(*) INTO v_count FROM roles WHERE code = v_role;
     IF v_count = 0 THEN bad_request('Unknown role'); END IF;
 
-    PKG_ADMIN.create_invite(p_email, v_role, v_token);
+    PKG_ADMIN.create_invite(v_email, v_role, v_token);
 
     SELECT expires_at INTO v_exp FROM invites
      WHERE token_hash = PKG_CRYPTO.hash_sha256(v_token);
 
+    BEGIN
+      SELECT id INTO v_outbox_id
+        FROM email_outbox
+       WHERE template = 'INVITE' AND to_address = v_email
+       ORDER BY created_at DESC
+       FETCH FIRST 1 ROWS ONLY;
+
+      dispatch_transactional_email(
+        p_outbox_id      => v_outbox_id,
+        p_to_email       => v_email,
+        p_recipient_name => NULL,
+        p_subject        => 'You are invited to join Hibiscus TruckPark (' || v_role || ')',
+        p_heading        => 'You Are Invited to Hibiscus TruckPark',
+        p_copy           => 'An administrator has invited you to join Hibiscus TruckPark with the ' || v_role || ' role. Use the invitation token below in the app to set up your account.',
+        p_badge_label    => 'INVITATION TOKEN',
+        p_badge_value    => v_token,
+        p_footer_note    => 'This invitation expires in 72 hours.',
+        p_best_effort    => TRUE);
+    EXCEPTION
+      WHEN OTHERS THEN NULL;
+    END;
+
     -- The raw token only ever travels by email, never in this response.
-    SELECT JSON_OBJECT('email' VALUE LOWER(TRIM(p_email)), 'proposed_role' VALUE v_role,
+    SELECT JSON_OBJECT('email' VALUE v_email, 'proposed_role' VALUE v_role,
                        'expires_at' VALUE iso(v_exp), 'request_id' VALUE request_id RETURNING CLOB)
       INTO p_body FROM dual;
     p_status := 201;
@@ -669,23 +1421,30 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     p_authorization IN VARCHAR2, p_user_status IN VARCHAR2,
     p_status OUT NUMBER, p_body OUT CLOB
   ) IS
-    v_filter VARCHAR2(30) := NVL(UPPER(TRIM(p_user_status)), 'PENDING_APPROVAL');
+    v_filter VARCHAR2(30) := NVL(UPPER(TRIM(p_user_status)), 'ALL');
     v_items  CLOB;
   BEGIN
     PKG_AUTHZ.validate_session(bearer_token(p_authorization));
     PKG_AUTHZ.require_permission('user.approve');
 
-    IF v_filter NOT IN ('PENDING_VERIFICATION', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED', 'DEACTIVATED') THEN
+    IF v_filter NOT IN ('ALL', 'PENDING_VERIFICATION', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED', 'DEACTIVATED') THEN
       bad_request('Unknown status filter');
     END IF;
 
     SELECT NVL(JSON_ARRAYAGG(JSON_OBJECT(
-                 'id' VALUE u.id, 'full_name' VALUE u.full_name, 'email' VALUE u.email,
-                 'status' VALUE u.status, 'created_at' VALUE iso(u.created_at))
-               ORDER BY u.created_at RETURNING CLOB), TO_CLOB('[]'))
+                 'id'         VALUE u.id,
+                 'full_name'  VALUE u.full_name,
+                 'email'      VALUE u.email,
+                 'phone'      VALUE u.phone,
+                 'status'     VALUE u.status,
+                 'role'       VALUE COALESCE(
+                                      (SELECT MAX(ur.role_code) FROM user_roles ur WHERE ur.user_id = u.id),
+                                      'RUNNER'),
+                 'created_at' VALUE iso(u.created_at))
+               ORDER BY u.created_at DESC RETURNING CLOB), TO_CLOB('[]'))
       INTO v_items
       FROM users u
-     WHERE u.status = v_filter;
+     WHERE (v_filter = 'ALL' OR u.status = v_filter);
 
     SELECT JSON_OBJECT('items' VALUE v_items FORMAT JSON, 'request_id' VALUE request_id RETURNING CLOB)
       INTO p_body FROM dual;
@@ -698,8 +1457,11 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     p_authorization IN VARCHAR2, p_user_id IN VARCHAR2, p_role_code IN VARCHAR2,
     p_status OUT NUMBER, p_body OUT CLOB
   ) IS
-    v_role  VARCHAR2(30) := UPPER(TRIM(p_role_code));
-    v_count NUMBER;
+    v_role      VARCHAR2(30) := UPPER(TRIM(p_role_code));
+    v_count     NUMBER;
+    v_email     VARCHAR2(320);
+    v_full_name VARCHAR2(200);
+    v_outbox_id VARCHAR2(36);
   BEGIN
     PKG_AUTHZ.validate_session(bearer_token(p_authorization));
     PKG_AUTHZ.require_permission('user.approve');
@@ -708,11 +1470,46 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     SELECT COUNT(*) INTO v_count FROM roles WHERE code = v_role;
     IF v_count = 0 THEN bad_request('Unknown role'); END IF;
 
-    -- Only people who verified their email can be approved.
-    SELECT COUNT(*) INTO v_count FROM users WHERE id = p_user_id AND status = 'PENDING_APPROVAL';
-    IF v_count = 0 THEN bad_request('User is not waiting for approval'); END IF;
+    BEGIN
+      SELECT email, full_name INTO v_email, v_full_name
+        FROM users
+       WHERE id = p_user_id;
+    EXCEPTION
+      WHEN NO_DATA_FOUND THEN
+        bad_request('User not found');
+    END;
 
+    -- Prevent an administrator from accidentally removing their own ADMIN role if they are the only admin
+    IF p_user_id = PKG_AUTHZ.get_current_user_id() AND v_role != 'ADMIN' THEN
+      SELECT COUNT(*) INTO v_count
+        FROM user_roles
+       WHERE role_code = 'ADMIN' AND user_id <> p_user_id;
+      IF v_count = 0 THEN
+        bad_request('Cannot remove ADMIN role from the only administrator account');
+      END IF;
+    END IF;
+
+    -- Ensure single primary role assignment when updating role
+    DELETE FROM user_roles WHERE user_id = p_user_id AND role_code <> v_role;
     PKG_ADMIN.approve_user(p_user_id, v_role);
+
+    v_outbox_id := LOWER(RAWTOHEX(SYS_GUID()));
+    INSERT INTO email_outbox (id, template, to_address, payload, status)
+    VALUES (v_outbox_id, 'ACCOUNT_APPROVED', v_email,
+            JSON_OBJECT('user_id' VALUE p_user_id, 'role' VALUE v_role), 'SENDING');
+
+    dispatch_transactional_email(
+      p_outbox_id      => v_outbox_id,
+      p_to_email       => v_email,
+      p_recipient_name => v_full_name,
+      p_subject        => 'Your Hibiscus TruckPark role is now ' || v_role,
+      p_heading        => 'Account Role Updated',
+      p_copy           => 'An administrator has updated your Hibiscus TruckPark role assignment.',
+      p_badge_label    => 'ASSIGNED ROLE',
+      p_badge_value    => v_role,
+      p_footer_note    => 'Open the Hibiscus TruckPark app to access your ' || v_role || ' workspace.',
+      p_best_effort    => TRUE);
+
     p_body := ok_body;
     p_status := 200;
     COMMIT;
@@ -724,17 +1521,44 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     p_authorization IN VARCHAR2, p_user_id IN VARCHAR2, p_reason IN VARCHAR2,
     p_status OUT NUMBER, p_body OUT CLOB
   ) IS
-    v_count NUMBER;
+    v_email     VARCHAR2(320);
+    v_full_name VARCHAR2(200);
+    v_outbox_id VARCHAR2(36);
   BEGIN
     PKG_AUTHZ.validate_session(bearer_token(p_authorization));
     PKG_AUTHZ.require_permission('user.approve');
 
     require_text(p_user_id, 'user id', 36);
     require_text(p_reason, 'reason', 500);
-    SELECT COUNT(*) INTO v_count FROM users WHERE id = p_user_id AND status = 'PENDING_APPROVAL';
-    IF v_count = 0 THEN bad_request('User is not waiting for approval'); END IF;
+
+    BEGIN
+      SELECT email, full_name INTO v_email, v_full_name
+        FROM users
+       WHERE id = p_user_id AND status = 'PENDING_APPROVAL';
+    EXCEPTION
+      WHEN NO_DATA_FOUND THEN
+        bad_request('User is not waiting for approval');
+    END;
 
     PKG_ADMIN.reject_user(p_user_id, p_reason);
+
+    v_outbox_id := LOWER(RAWTOHEX(SYS_GUID()));
+    INSERT INTO email_outbox (id, template, to_address, payload, status)
+    VALUES (v_outbox_id, 'ACCOUNT_REJECTED', v_email,
+            JSON_OBJECT('user_id' VALUE p_user_id, 'reason' VALUE TRIM(p_reason)), 'SENDING');
+
+    dispatch_transactional_email(
+      p_outbox_id      => v_outbox_id,
+      p_to_email       => v_email,
+      p_recipient_name => v_full_name,
+      p_subject        => 'Update on your Hibiscus TruckPark account registration',
+      p_heading        => 'Account Registration Not Approved',
+      p_copy           => 'Your Hibiscus TruckPark account request could not be approved at this time.',
+      p_badge_label    => 'REASON',
+      p_badge_value    => TRIM(p_reason),
+      p_footer_note    => 'Contact your site supervisor or administrator if you believe this was in error.',
+      p_best_effort    => TRUE);
+
     p_body := ok_body;
     p_status := 200;
     COMMIT;
@@ -768,27 +1592,99 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     WHEN OTHERS THEN fail(SQLCODE, SQLERRM, p_status, p_body);
   END deactivate_user;
 
+  PROCEDURE list_devices(
+    p_authorization IN VARCHAR2,
+    p_status OUT NUMBER, p_body OUT CLOB
+  ) IS
+    v_items      CLOB;
+    v_cur_dev_id VARCHAR2(36);
+  BEGIN
+    PKG_AUTHZ.validate_session(bearer_token(p_authorization));
+    PKG_AUTHZ.require_permission('device.manage');
+    v_cur_dev_id := PKG_AUTHZ.get_current_device_id();
+
+    SELECT NVL(JSON_ARRAYAGG(JSON_OBJECT(
+                 'id'                VALUE d.id,
+                 'user_id'           VALUE d.user_id,
+                 'user_name'         VALUE u.full_name,
+                 'user_email'        VALUE u.email,
+                 'name'              VALUE NVL(d.name, 'Android Handset'),
+                 'registered_at'     VALUE iso(d.registered_at),
+                 'last_seen_at'      VALUE iso(d.last_seen_at),
+                 'revoked_at'        VALUE iso(d.revoked_at),
+                 'revoke_reason'     VALUE d.revoke_reason,
+                 'is_current_device' VALUE CASE WHEN d.id = v_cur_dev_id THEN 'true' ELSE 'false' END FORMAT JSON)
+               ORDER BY CASE WHEN d.revoked_at IS NULL THEN 0 ELSE 1 END,
+                        d.last_seen_at DESC NULLS LAST,
+                        d.registered_at DESC
+               RETURNING CLOB), TO_CLOB('[]'))
+      INTO v_items
+      FROM devices d
+      JOIN users u ON u.id = d.user_id;
+
+    SELECT JSON_OBJECT('items' VALUE v_items FORMAT JSON, 'request_id' VALUE request_id RETURNING CLOB)
+      INTO p_body FROM dual;
+    p_status := 200;
+  EXCEPTION
+    WHEN OTHERS THEN fail(SQLCODE, SQLERRM, p_status, p_body);
+  END list_devices;
+
   PROCEDURE revoke_device(
     p_authorization IN VARCHAR2, p_device_id IN VARCHAR2, p_reason IN VARCHAR2,
     p_status OUT NUMBER, p_body OUT CLOB
   ) IS
-    v_count NUMBER;
+    v_count       NUMBER;
+    v_dev_name    VARCHAR2(200);
+    v_owner_email VARCHAR2(320);
+    v_owner_name  VARCHAR2(200);
+    v_outbox_id   VARCHAR2(36);
   BEGIN
     PKG_AUTHZ.validate_session(bearer_token(p_authorization));
     PKG_AUTHZ.require_permission('device.manage');
 
     require_text(p_device_id, 'device id', 36);
     require_text(p_reason, 'reason', 500);
-    SELECT COUNT(*) INTO v_count FROM devices WHERE id = p_device_id;
-    IF v_count = 0 THEN
-      p_status := 404;
-      SELECT JSON_OBJECT('code' VALUE 'NOT_FOUND', 'message' VALUE 'Device not found',
-                         'request_id' VALUE request_id RETURNING CLOB)
-        INTO p_body FROM dual;
-      RETURN;
+
+    IF p_device_id = PKG_AUTHZ.get_current_device_id() THEN
+      bad_request('Cannot revoke the handset you are currently signed in on');
     END IF;
 
+    BEGIN
+      SELECT NVL(d.name, 'Android Handset'), u.email, u.full_name
+        INTO v_dev_name, v_owner_email, v_owner_name
+        FROM devices d
+        JOIN users u ON u.id = d.user_id
+       WHERE d.id = p_device_id;
+    EXCEPTION
+      WHEN NO_DATA_FOUND THEN
+        p_status := 404;
+        SELECT JSON_OBJECT('code' VALUE 'NOT_FOUND', 'message' VALUE 'Device not found',
+                           'request_id' VALUE request_id RETURNING CLOB)
+          INTO p_body FROM dual;
+        RETURN;
+    END;
+
     PKG_ADMIN.revoke_device(p_device_id, p_reason);
+
+    IF v_owner_email IS NOT NULL AND LOWER(v_owner_email) != 'admin@hibiscuss.com' THEN
+      v_outbox_id := LOWER(RAWTOHEX(SYS_GUID()));
+      INSERT INTO email_outbox (id, template, to_address, payload, status)
+      VALUES (v_outbox_id, 'DEVICE_REVOKED', v_owner_email,
+              JSON_OBJECT('device_id' VALUE p_device_id, 'reason' VALUE TRIM(p_reason)), 'SENDING');
+
+      dispatch_transactional_email(
+        p_outbox_id      => v_outbox_id,
+        p_to_email       => v_owner_email,
+        p_recipient_name => v_owner_name,
+        p_subject        => 'Security alert: Handset access revoked on Hibiscus TruckPark',
+        p_heading        => 'Device Access Revoked',
+        p_copy           => 'An administrator has revoked access for device "' || v_dev_name || '" on your Hibiscus TruckPark account.',
+        p_badge_label    => 'REVOCATION REASON',
+        p_badge_value    => TRIM(p_reason),
+        p_footer_note    => 'All active sessions on that device have been terminated immediately.',
+        p_best_effort    => TRUE);
+    END IF;
+
     p_body := ok_body;
     p_status := 200;
     COMMIT;

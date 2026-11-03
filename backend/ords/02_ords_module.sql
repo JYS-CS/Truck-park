@@ -33,6 +33,48 @@ CREATE OR REPLACE PACKAGE BODY PKG_API_HTTP AS
 END PKG_API_HTTP;
 /
 
+-- Ensure users.phone column exists on older database deployments.
+BEGIN
+  EXECUTE IMMEDIATE 'ALTER TABLE users ADD (phone VARCHAR2(40))';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -1430 THEN -- ORA-01430: column being added already exists in table
+      RAISE;
+    END IF;
+END;
+/
+
+-- Allow outbound TLS/SMTP connections from Oracle Autonomous Database to Brevo.
+BEGIN
+  BEGIN
+    DBMS_NETWORK_ACL_ADMIN.APPEND_HOST_ACE(
+      host       => 'smtp-relay.brevo.com',
+      lower_port => 587,
+      upper_port => 587,
+      ace        => xs$ace_type(
+                      privilege_list => xs$name_list('smtp', 'connect', 'resolve'),
+                      principal_name => SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA'),
+                      principal_type => xs_acl.ptype_db));
+  EXCEPTION
+    WHEN OTHERS THEN NULL;
+  END;
+
+  BEGIN
+    DBMS_NETWORK_ACL_ADMIN.APPEND_HOST_ACE(
+      host       => 'api.brevo.com',
+      lower_port => 443,
+      upper_port => 443,
+      ace        => xs$ace_type(
+                      privilege_list => xs$name_list('http', 'connect', 'resolve'),
+                      principal_name => SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA'),
+                      principal_type => xs_acl.ptype_db));
+  EXCEPTION
+    WHEN OTHERS THEN NULL;
+  END;
+  COMMIT;
+END;
+/
+
 -- Turn ORDS on for this schema if not already enabled with truckpark mapping.
 BEGIN
   BEGIN
@@ -102,18 +144,26 @@ BEGIN
     'PKG_API.refresh(:refresh_token, :device_id, v_s, v_b);');
   add_handler('auth/accept-invite', 'POST',
     'PKG_API.accept_invite(:token, :full_name, :password, v_s, v_b);');
+  add_handler('auth/check-email', 'POST',
+    'PKG_API.check_email(:email, v_s, v_b);');
+  add_handler('auth/request-signup-code', 'POST',
+    'PKG_API.request_signup_code(:email, :full_name, v_s, v_b);');
   add_handler('auth/register', 'POST',
     'PKG_API.register(:full_name, :email, :phone, :password, :code, v_s, v_b);');
   add_handler('auth/verify-email', 'POST',
     'PKG_API.verify_email(:user_id, :code, :authorization, v_s, v_b);');
+  add_handler('auth/request-password-reset', 'POST',
+    'PKG_API.request_password_reset(:email, v_s, v_b);');
+  add_handler('auth/reset-password', 'POST',
+    'PKG_API.reset_password(:email, :code, :new_password, v_s, v_b);');
 
   -- Signed in ---------------------------------------------------------------
   add_handler('auth/logout', 'POST',
     'PKG_API.logout(:authorization, v_s, v_b);');
   add_handler('auth/change-password', 'POST',
-    'PKG_API.change_password(:authorization, :new_email, :new_password, v_s, v_b);');
+    'PKG_API.change_password(:authorization, :new_email, :new_password, :code, v_s, v_b);');
   add_handler('auth/send-verification-code', 'POST',
-    'PKG_API.send_verification_code(:authorization, :code, v_s, v_b);');
+    'PKG_API.send_verification_code(:authorization, :email, v_s, v_b);');
   add_handler('me', 'GET',
     'PKG_API.me(:authorization, v_s, v_b);');
 
@@ -128,6 +178,8 @@ BEGIN
     'PKG_API.reject_user(:authorization, :id, :reason, v_s, v_b);');
   add_handler('admin/users/:id/deactivate', 'POST',
     'PKG_API.deactivate_user(:authorization, :id, :deactivate_at, v_s, v_b);');
+  add_handler('admin/devices', 'GET',
+    'PKG_API.list_devices(:authorization, v_s, v_b);');
   add_handler('admin/devices/:id/revoke', 'POST',
     'PKG_API.revoke_device(:authorization, :id, :reason, v_s, v_b);');
 

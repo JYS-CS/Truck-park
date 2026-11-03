@@ -105,14 +105,14 @@ fun AdminSecuritySetupScreen(
     val dark = scheme.background.luminance() < 0.5f
 
     // Security Gate State
-    var passwordChanged by remember { mutableStateOf(initialPasswordChanged) }
-    var emailVerified by remember { mutableStateOf(initialEmailVerified || user.emailVerified) }
+    var passwordChanged by rememberSaveable { mutableStateOf(initialPasswordChanged) }
+    var emailVerified by rememberSaveable { mutableStateOf(initialEmailVerified || user.emailVerified) }
 
     // Password change fields
     // false = credentials page, true = email verification page (separate screen)
     var onVerifyPage by rememberSaveable { mutableStateOf(initialPasswordChanged) }
-    var newPassword by remember { mutableStateOf("") }
-    var newEmail by remember {
+    var newPassword by rememberSaveable { mutableStateOf("") }
+    var newEmail by rememberSaveable {
         mutableStateOf(if (user.email.equals("admin@hibiscuss.com", ignoreCase = true)) "" else user.email)
     }
     var isChangingPassword by remember { mutableStateOf(false) }
@@ -432,7 +432,19 @@ fun AdminSecuritySetupScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Text(
+                    text = "Sign out and use another account",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = if (dark) Color(0xFF94A3B8) else Color(0xFF64748B),
+                    modifier = Modifier
+                        .clip(CapsuleShape)
+                        .clickable { viewModel.signOut() }
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
             }
         }
     }

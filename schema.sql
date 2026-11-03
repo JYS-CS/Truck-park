@@ -579,14 +579,22 @@ CREATE OR REPLACE PACKAGE BODY PKG_AUTH AS
        WHERE u.email = v_email;
     EXCEPTION
       WHEN NO_DATA_FOUND THEN
+        -- OWASP anti-enumeration: perform full 600,000-iteration PBKDF2 dummy hash so
+        -- non-existent emails take the same response time as existing accounts.
+        v_calc_hash := PKG_CRYPTO.hash_password(
+          p_password,
+          HEXTORAW('4869626973637573547275636B506172'),
+          600000
+        );
         RAISE_APPLICATION_ERROR(-20011, 'Invalid email or password');
     END;
 
-    IF v_locked IS NOT NULL AND v_locked > SYSTIMESTAMP THEN
-      RAISE_APPLICATION_ERROR(-20012, 'Account temporarily locked due to failed attempts. Try again later.');
-    END IF;
-
+    -- Always compute the password hash before checking lock status to prevent timing side-channels
     v_calc_hash := PKG_CRYPTO.hash_password(p_password, v_salt, v_iters);
+
+    IF v_locked IS NOT NULL AND v_locked > SYSTIMESTAMP THEN
+      RAISE_APPLICATION_ERROR(-20011, 'Invalid email or password');
+    END IF;
 
     IF v_calc_hash != v_hash THEN
       -- A lock that has expired starts a fresh count instead of re-locking on one more guess.
@@ -598,7 +606,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_AUTH AS
         UPDATE auth_identities
            SET failed_attempts = v_failed, locked_until = SYSTIMESTAMP + INTERVAL '15' MINUTE
          WHERE user_id = p_user_id AND provider = 'PASSWORD';
-        RAISE_APPLICATION_ERROR(-20012, 'Too many failed attempts. Account locked for 15 minutes.');
+        RAISE_APPLICATION_ERROR(-20011, 'Invalid email or password');
       ELSE
         UPDATE auth_identities
            SET failed_attempts = v_failed
@@ -662,7 +670,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_AUTH AS
        AND purpose = 'VERIFY_EMAIL'
        AND created_at > SYSTIMESTAMP - INTERVAL '1' HOUR;
     IF v_count >= 5 THEN
-      RAISE_APPLICATION_ERROR(-20013, 'Too many attempts. Wait an hour, then request a new confirmation code.');
+      RAISE_APPLICATION_ERROR(-20013, 'Invalid or expired confirmation code');
     END IF;
 
     SELECT COUNT(*) INTO v_count
@@ -685,7 +693,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_AUTH AS
      WHERE user_id = p_user_id AND purpose = 'VERIFY_EMAIL' AND code_hash = v_code_hash;
 
     UPDATE users
-       SET email_verified_at = SYSTIMESTAMP, status = 'PENDING_APPROVAL'
+       SET email_verified_at = SYSTIMESTAMP, status = 'APPROVED'
      WHERE id = p_user_id;
   END verify_email;
 
@@ -875,7 +883,7 @@ BEGIN
 
   IF v_admin_count = 0 THEN
     INSERT INTO users (id, full_name, email, email_verified_at, status)
-    VALUES (v_user_id, 'Administrator', 'admin@hibiscuss.com', SYSTIMESTAMP, 'APPROVED');
+    VALUES (v_user_id, 'Administrator', 'admin@hibiscuss.com', NULL, 'APPROVED');
 
     v_salt := PKG_CRYPTO.generate_salt();
     v_pwd_hash := PKG_CRYPTO.hash_password('@Admin', v_salt, 600000);

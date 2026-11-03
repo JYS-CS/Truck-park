@@ -64,6 +64,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
@@ -256,24 +257,33 @@ fun LiquidMetalAuthScreen(
         }
     }
 
-    var mode by remember { mutableStateOf(AuthMode.SignIn) }
-    var isSplit by remember { mutableStateOf(false) }
+    var mode by rememberSaveable { mutableStateOf(AuthMode.SignIn) }
+    var isSplit by rememberSaveable { mutableStateOf(false) }
 
-    var emailOrUser by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var fullName by remember { mutableStateOf("") }
-    var phoneNumber by remember { mutableStateOf("") }
+    var emailOrUser by rememberSaveable { mutableStateOf("") }
+    var password by rememberSaveable { mutableStateOf("") }
+    var fullName by rememberSaveable { mutableStateOf("") }
+    var phoneNumber by rememberSaveable { mutableStateOf("") }
 
     var emailOrUserError by remember { mutableStateOf<String?>(null) }
     var passwordError by remember { mutableStateOf<String?>(null) }
     var fullNameError by remember { mutableStateOf<String?>(null) }
     var phoneNumberError by remember { mutableStateOf<String?>(null) }
 
-    var isVerifyingRegistration by remember { mutableStateOf(false) }
-    var isRegistrationPendingApproval by remember { mutableStateOf(false) }
+    var isVerifyingRegistration by rememberSaveable { mutableStateOf(false) }
+    var isRegistrationPendingApproval by rememberSaveable { mutableStateOf(false) }
     var isSendingSignUpCode by remember { mutableStateOf(false) }
     var regResendCooldown by remember { mutableIntStateOf(0) }
     var regNoticeMessage by remember { mutableStateOf<String?>(null) }
+
+    var isResettingPassword by rememberSaveable { mutableStateOf(false) }
+    var isVerifyingPasswordReset by rememberSaveable { mutableStateOf(false) }
+    var isSendingResetCode by remember { mutableStateOf(false) }
+    var resetNewPassword by rememberSaveable { mutableStateOf("") }
+    var resetNewPasswordError by remember { mutableStateOf<String?>(null) }
+    var resetResendCooldown by remember { mutableIntStateOf(0) }
+    var resetNoticeMessage by remember { mutableStateOf<String?>(null) }
+    var signInSuccessBanner by remember { mutableStateOf<String?>(null) }
 
     var animTime by remember { mutableStateOf(0f) }
     var animPos by remember { mutableStateOf(0f) }
@@ -286,6 +296,13 @@ fun LiquidMetalAuthScreen(
         if (regResendCooldown > 0) {
             delay(1000)
             regResendCooldown -= 1
+        }
+    }
+
+    LaunchedEffect(resetResendCooldown) {
+        if (resetResendCooldown > 0) {
+            delay(1000)
+            resetResendCooldown -= 1
         }
     }
 
@@ -305,8 +322,56 @@ fun LiquidMetalAuthScreen(
         isSendingSignUpCode = false
         regNoticeMessage = null
         regResendCooldown = 0
+        isResettingPassword = false
+        isVerifyingPasswordReset = false
+        isSendingResetCode = false
+        resetNewPassword = ""
+        resetNewPasswordError = null
+        resetResendCooldown = 0
+        resetNoticeMessage = null
+        signInSuccessBanner = null
         viewModel.clearError()
         focusManager.clearFocus()
+    }
+
+    fun submitPasswordResetRequest() {
+        if (isSendingResetCode) return
+        serverErrorMessage = null
+        signInSuccessBanner = null
+        val sanitizedEmail = AuthSecurityUtils.sanitizeText(emailOrUser.trim(), 60)
+        val sanitizedNewPassword = AuthSecurityUtils.sanitizePassword(resetNewPassword)
+
+        val eError = AuthSecurityUtils.validateEmail(sanitizedEmail)
+        val pError = AuthSecurityUtils.validatePassword(sanitizedNewPassword, requireComplexity = true)
+
+        emailOrUserError = eError
+        resetNewPasswordError = pError
+
+        if (eError == null && pError == null) {
+            focusManager.clearFocus()
+            isSendingResetCode = true
+            viewModel.requestPasswordReset(sanitizedEmail) { result ->
+                isSendingResetCode = false
+                when (result) {
+                    is AuthResult.Success -> {
+                        isVerifyingPasswordReset = true
+                        resetResendCooldown = 40
+                        resetNoticeMessage = "Enter the 6-digit reset code sent to ${sanitizedEmail.lowercase()}"
+                    }
+                    is AuthResult.Failure -> {
+                        val err = result.error
+                        if (err.code == "NOT_FOUND" || err.httpStatus == 404) {
+                            // Never reveal whether the email exists: proceed to the code screen without sending a code
+                            isVerifyingPasswordReset = true
+                            resetResendCooldown = 40
+                            resetNoticeMessage = "Enter the 6-digit reset code sent to ${sanitizedEmail.lowercase()}"
+                        } else {
+                            serverErrorMessage = err.message
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fun submitSignIn() {
@@ -361,7 +426,15 @@ fun LiquidMetalAuthScreen(
                         regNoticeMessage = "Verification code sent to ${sanitizedEmail.lowercase()}"
                     }
                     is AuthResult.Failure -> {
-                        serverErrorMessage = result.error.message
+                        val err = result.error
+                        if (err.code == "ALREADY_EXISTS" ||
+                            err.httpStatus == 409 ||
+                            err.message.contains("already exists", ignoreCase = true) ||
+                            err.message.contains("already in use", ignoreCase = true)
+                        ) {
+                            emailOrUserError = "An account with this email already exists"
+                        }
+                        serverErrorMessage = err.message
                     }
                 }
             }
@@ -479,7 +552,7 @@ fun LiquidMetalAuthScreen(
                                             coroutineScope.launch {
                                                 delay(900)
                                                 isVerifyingRegistration = false
-                                                isRegistrationPendingApproval = true
+                                                viewModel.checkCurrentSession()
                                             }
                                         }
                                         is AuthResult.Failure -> {
@@ -496,6 +569,197 @@ fun LiquidMetalAuthScreen(
                             regNoticeMessage = null
                         },
                     )
+                } else if (isVerifyingPasswordReset) {
+                    EmailCodeVerification(
+                        email = emailOrUser.trim(),
+                        dark = dark,
+                        notice = resetNoticeMessage,
+                        resendCooldownSeconds = resetResendCooldown,
+                        onResend = {
+                            val targetEmail = emailOrUser.trim()
+                            viewModel.requestPasswordReset(targetEmail) { result ->
+                                when (result) {
+                                    is AuthResult.Success -> {
+                                        resetResendCooldown = 40
+                                        resetNoticeMessage = "Enter the 6-digit reset code sent to ${targetEmail.lowercase()}"
+                                    }
+                                    is AuthResult.Failure -> {
+                                        val err = result.error
+                                        if (err.code == "NOT_FOUND" || err.httpStatus == 404) {
+                                            resetResendCooldown = 40
+                                            resetNoticeMessage = "Enter the 6-digit reset code sent to ${targetEmail.lowercase()}"
+                                        } else {
+                                            resetNoticeMessage = err.message
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        onVerify = { code, onResult ->
+                            if (code.length == 6) {
+                                viewModel.resetPassword(
+                                    email = emailOrUser.trim(),
+                                    code = code,
+                                    newPassword = resetNewPassword,
+                                ) { result ->
+                                    when (result) {
+                                        is AuthResult.Success -> {
+                                            onResult(null)
+                                            coroutineScope.launch {
+                                                delay(900)
+                                                isVerifyingPasswordReset = false
+                                                isResettingPassword = false
+                                                password = ""
+                                                resetNewPassword = ""
+                                                resetNoticeMessage = null
+                                                serverErrorMessage = null
+                                                signInSuccessBanner = "Password reset complete. Sign in with your new password."
+                                            }
+                                        }
+                                        is AuthResult.Failure -> {
+                                            onResult(result.error.message)
+                                        }
+                                    }
+                                }
+                            } else {
+                                onResult("Enter a valid 6-digit reset code")
+                            }
+                        },
+                        onBack = {
+                            isVerifyingPasswordReset = false
+                            resetNoticeMessage = null
+                        },
+                    )
+                } else if (isResettingPassword) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text(
+                            text = "Reset Password",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = if (dark) Color.White else Color(0xFF0F172A),
+                        )
+                        Text(
+                            text = "Enter your account email and choose a new password. We'll send a 6-digit verification code to confirm.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = scheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                        )
+
+                        LiquidCapsuleInput(
+                            value = emailOrUser,
+                            onValueChange = { input ->
+                                val sanitized = AuthSecurityUtils.sanitizeText(input, 60)
+                                emailOrUser = sanitized
+                                if (emailOrUserError != null) {
+                                    emailOrUserError = AuthSecurityUtils.validateEmail(sanitized)
+                                }
+                            },
+                            placeholder = "Account Email Address",
+                            icon = Icons.Default.Email,
+                            errorMessage = emailOrUserError,
+                            keyboardType = KeyboardType.Email,
+                            imeAction = ImeAction.Next,
+                            onImeAction = {
+                                val sanitized = AuthSecurityUtils.sanitizeText(emailOrUser.trim(), 60)
+                                emailOrUserError = AuthSecurityUtils.validateEmail(sanitized)
+                                focusManager.moveFocus(FocusDirection.Down)
+                            },
+                            index = 0,
+                            animPos = 0f,
+                            animTime = 1.6f,
+                            dark = dark,
+                        )
+
+                        LiquidCapsuleInput(
+                            value = resetNewPassword,
+                            onValueChange = { input ->
+                                val sanitized = AuthSecurityUtils.sanitizePassword(input)
+                                resetNewPassword = sanitized
+                                if (resetNewPasswordError != null) {
+                                    resetNewPasswordError = AuthSecurityUtils.validatePassword(sanitized, requireComplexity = true)
+                                }
+                            },
+                            placeholder = "New Password",
+                            icon = Icons.Default.Lock,
+                            errorMessage = resetNewPasswordError,
+                            isPassword = true,
+                            keyboardType = KeyboardType.Password,
+                            imeAction = ImeAction.Done,
+                            onImeAction = {
+                                submitPasswordResetRequest()
+                            },
+                            index = 1,
+                            animPos = 0f,
+                            animTime = 1.6f,
+                            dark = dark,
+                        )
+
+                        PasswordRequirementsReflection(
+                            password = resetNewPassword,
+                            dark = dark,
+                        )
+
+                        AnimatedVisibility(
+                            visible = serverErrorMessage != null,
+                            enter = fadeIn(),
+                            exit = fadeOut(),
+                        ) {
+                            if (serverErrorMessage != null) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(if (dark) Color(0xFF450A0A).copy(alpha = 0.7f) else Color(0xFFFEE2E2))
+                                        .border(1.dp, if (dark) Color(0xFFDC2626).copy(alpha = 0.6f) else Color(0xFFF87171), RoundedCornerShape(14.dp))
+                                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.Warning,
+                                            contentDescription = null,
+                                            tint = Color(0xFFEF4444),
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = serverErrorMessage ?: "",
+                                            color = if (dark) Color(0xFFFCA5A5) else Color(0xFFB91C1C),
+                                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        LiquidTriggerButton(
+                            text = if (isSendingResetCode) "Sending reset code..." else "Send Reset Code",
+                            onClick = { submitPasswordResetRequest() },
+                            dark = dark,
+                            isLoading = isSendingResetCode,
+                            bringIntoViewRequester = null,
+                        )
+
+                        Text(
+                            text = "Back to Sign In",
+                            color = if (dark) Color(0xFF38BDF8) else scheme.primary,
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    isResettingPassword = false
+                                    resetNewPassword = ""
+                                    resetNewPasswordError = null
+                                    serverErrorMessage = null
+                                    emailOrUserError = null
+                                }
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                        )
+                    }
                 } else {
                     Box(
                         modifier = Modifier
@@ -611,6 +875,52 @@ fun LiquidMetalAuthScreen(
                                     animTime = animTime,
                                     dark = dark,
                                 )
+
+                                Box(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    contentAlignment = Alignment.CenterEnd,
+                                ) {
+                                    Text(
+                                        text = "Forgot password?",
+                                        color = if (dark) Color(0xFF38BDF8) else scheme.primary,
+                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable {
+                                                serverErrorMessage = null
+                                                signInSuccessBanner = null
+                                                emailOrUserError = null
+                                                passwordError = null
+                                                resetNewPassword = ""
+                                                resetNewPasswordError = null
+                                                isResettingPassword = true
+                                            }
+                                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                                    )
+                                }
+
+                                AnimatedVisibility(
+                                    visible = signInSuccessBanner != null,
+                                    enter = fadeIn(),
+                                    exit = fadeOut(),
+                                ) {
+                                    if (signInSuccessBanner != null) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(14.dp))
+                                                .background(if (dark) Color(0xFF064E3B).copy(alpha = 0.7f) else Color(0xFFD1FAE5))
+                                                .border(1.dp, if (dark) Color(0xFF10B981).copy(alpha = 0.6f) else Color(0xFF34D399), RoundedCornerShape(14.dp))
+                                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                                        ) {
+                                            Text(
+                                                text = signInSuccessBanner ?: "",
+                                                color = if (dark) Color(0xFFA7F3D0) else Color(0xFF065F46),
+                                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                                            )
+                                        }
+                                    }
+                                }
 
                                 AnimatedVisibility(
                                     visible = serverErrorMessage != null,

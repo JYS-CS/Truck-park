@@ -3,6 +3,8 @@ package com.truckpark.management.data.remote.auth
 import com.truckpark.management.core.common.AuthResult
 import com.truckpark.management.domain.models.AuthSession
 import com.truckpark.management.domain.models.AuthUser
+import com.truckpark.management.domain.models.ManagedDevice
+import com.truckpark.management.domain.models.ManagedUser
 import com.truckpark.management.domain.models.SignInResult
 
 /**
@@ -18,8 +20,11 @@ interface AuthRemoteDataSource {
     suspend fun acceptInvite(token: String, fullName: String, password: String): AuthResult<String>
     suspend fun verifyEmail(userId: String, code: String, sessionToken: String? = null): AuthResult<Unit>
     suspend fun sendVerificationCode(sessionToken: String): AuthResult<Unit>
-    suspend fun sendVerificationCode(sessionToken: String, code: String?): AuthResult<Unit> =
+    suspend fun sendVerificationCode(sessionToken: String, email: String?): AuthResult<Unit> =
         sendVerificationCode(sessionToken)
+    suspend fun checkEmailAvailable(email: String): AuthResult<Unit> = AuthResult.Success(Unit)
+    suspend fun requestSignUpCode(email: String, fullName: String = ""): AuthResult<Unit> =
+        checkEmailAvailable(email)
     suspend fun register(
         fullName: String,
         email: String,
@@ -32,4 +37,30 @@ interface AuthRemoteDataSource {
         newEmail: String,
         newPassword: String,
     ): AuthResult<Unit>
+    suspend fun changePassword(
+        sessionToken: String,
+        newEmail: String,
+        newPassword: String,
+        code: String?,
+    ): AuthResult<Unit> = changePassword(sessionToken, newEmail, newPassword)
+    suspend fun requestPasswordReset(email: String): AuthResult<Unit> = AuthResult.Success(Unit)
+    suspend fun resetPassword(
+        email: String,
+        code: String,
+        newPassword: String,
+    ): AuthResult<Unit> = AuthResult.Success(Unit)
+    suspend fun listUsers(sessionToken: String, status: String? = null): AuthResult<List<ManagedUser>> =
+        AuthResult.Success(emptyList())
+    suspend fun updateUserRole(
+        sessionToken: String,
+        userId: String,
+        roleCode: String,
+    ): AuthResult<Unit> = AuthResult.Success(Unit)
+    suspend fun listDevices(sessionToken: String): AuthResult<List<ManagedDevice>> =
+        AuthResult.Success(emptyList())
+    suspend fun revokeDevice(
+        sessionToken: String,
+        deviceId: String,
+        reason: String,
+    ): AuthResult<Unit> = AuthResult.Success(Unit)
 }

@@ -4,8 +4,9 @@ import com.truckpark.management.core.common.AuthError
 import com.truckpark.management.core.common.AuthResult
 import com.truckpark.management.data.local.DeviceIdProvider
 import com.truckpark.management.data.local.SessionStore
+import com.truckpark.management.data.local.StoredPendingCode
+import com.truckpark.management.data.local.StoredPendingSignUp
 import com.truckpark.management.data.remote.auth.AuthRemoteDataSource
-import com.truckpark.management.data.remote.email.EmailSender
 import com.truckpark.management.domain.models.AuthSession
 import com.truckpark.management.domain.models.AuthUser
 import com.truckpark.management.domain.models.SignInResult
@@ -35,34 +36,18 @@ private val USER = AuthUser(
 
 private class MemoryStore(var session: AuthSession? = null) : SessionStore {
     val verified = mutableSetOf<String>()
+    var pendingCode: StoredPendingCode? = null
+    var pendingSignUp: StoredPendingSignUp? = null
     override fun load() = session
     override fun save(session: AuthSession) { this.session = session }
     override fun clear() { session = null }
     override fun markEmailVerified(email: String) { verified += email.trim().lowercase() }
     override fun unmarkEmailVerified(email: String) { verified -= email.trim().lowercase() }
     override fun isEmailVerified(email: String): Boolean = email.trim().lowercase() in verified
-}
-
-private class FakeEmailSender : EmailSender {
-    data class SentEmail(
-        val toEmail: String,
-        val code: String,
-        val recipientName: String?,
-        val isAdminSetup: Boolean,
-    )
-
-    val sent = mutableListOf<SentEmail>()
-    var nextResult: AuthResult<Unit> = AuthResult.Success(Unit)
-
-    override suspend fun sendVerificationEmail(
-        toEmail: String,
-        code: String,
-        recipientName: String?,
-        isAdminSetup: Boolean,
-    ): AuthResult<Unit> {
-        sent += SentEmail(toEmail, code, recipientName, isAdminSetup)
-        return nextResult
-    }
+    override fun savePendingCode(pending: StoredPendingCode?) { pendingCode = pending }
+    override fun loadPendingCode(): StoredPendingCode? = pendingCode
+    override fun savePendingSignUp(pending: StoredPendingSignUp?) { pendingSignUp = pending }
+    override fun loadPendingSignUp(): StoredPendingSignUp? = pendingSignUp
 }
 
 private class FixedDevice : DeviceIdProvider {
@@ -75,12 +60,28 @@ private class FakeRemote : AuthRemoteDataSource {
     var signOutCalls = 0
     var changePasswordCalls = 0
     var registerCalls = 0
+    var sendVerificationCodeCalls = 0
+    var requestSignUpCodeCalls = 0
     var lastSignInEmail: String? = null
     var lastChangedEmail: String? = null
+    var lastSentVerificationEmail: String? = null
+    var lastRequestedSignUpEmail: String? = null
+    var expectedServerCode = "654321"
     var refreshResult: AuthResult<AuthSession> = AuthResult.Success(
         AuthSession("s2", "r2", NOW.plusSeconds(3600)),
     )
     var meBehaviour: (String) -> AuthResult<AuthUser> = { AuthResult.Success(USER) }
+    var checkEmailBehaviour: (String) -> AuthResult<Unit> = { AuthResult.Success(Unit) }
+
+    override suspend fun checkEmailAvailable(email: String): AuthResult<Unit> = checkEmailBehaviour(email)
+
+    override suspend fun requestSignUpCode(email: String, fullName: String): AuthResult<Unit> {
+        val check = checkEmailBehaviour(email)
+        if (check is AuthResult.Failure) return check
+        requestSignUpCodeCalls++
+        lastRequestedSignUpEmail = email
+        return AuthResult.Success(Unit)
+    }
 
     override suspend fun signIn(email: String, password: String, deviceId: String, deviceName: String):
         AuthResult<SignInResult> {
@@ -109,9 +110,25 @@ private class FakeRemote : AuthRemoteDataSource {
     override suspend fun acceptInvite(token: String, fullName: String, password: String) =
         AuthResult.Success("u1")
 
-    override suspend fun verifyEmail(userId: String, code: String, sessionToken: String?) = AuthResult.Success(Unit)
+    override suspend fun verifyEmail(userId: String, code: String, sessionToken: String?): AuthResult<Unit> {
+        if (code != expectedServerCode) {
+            return AuthResult.Failure(AuthError("INVALID_CODE", "Invalid or expired confirmation code.", 400))
+        }
+        return AuthResult.Success(Unit)
+    }
 
-    override suspend fun sendVerificationCode(sessionToken: String): AuthResult<Unit> = AuthResult.Success(Unit)
+    override suspend fun sendVerificationCode(sessionToken: String): AuthResult<Unit> =
+        sendVerificationCode(sessionToken, null)
+
+    override suspend fun sendVerificationCode(sessionToken: String, email: String?): AuthResult<Unit> {
+        if (email != null) {
+            val check = checkEmailBehaviour(email)
+            if (check is AuthResult.Failure) return check
+        }
+        sendVerificationCodeCalls++
+        lastSentVerificationEmail = email
+        return AuthResult.Success(Unit)
+    }
 
     override suspend fun register(
         fullName: String,
@@ -120,6 +137,9 @@ private class FakeRemote : AuthRemoteDataSource {
         password: String,
         code: String,
     ): AuthResult<String> {
+        if (code != expectedServerCode) {
+            return AuthResult.Failure(AuthError("INVALID_CODE", "Invalid or expired confirmation code.", 400))
+        }
         registerCalls++
         return AuthResult.Success("u-new")
     }
@@ -128,7 +148,17 @@ private class FakeRemote : AuthRemoteDataSource {
         sessionToken: String,
         newEmail: String,
         newPassword: String,
+    ): AuthResult<Unit> = changePassword(sessionToken, newEmail, newPassword, expectedServerCode)
+
+    override suspend fun changePassword(
+        sessionToken: String,
+        newEmail: String,
+        newPassword: String,
+        code: String?,
     ): AuthResult<Unit> {
+        if (code != expectedServerCode) {
+            return AuthResult.Failure(AuthError("INVALID_CODE", "Invalid or expired confirmation code.", 400))
+        }
         changePasswordCalls++
         lastChangedEmail = newEmail
         return AuthResult.Success(Unit)
@@ -139,7 +169,6 @@ class AuthRepositoryImplTest {
 
     private val remote = FakeRemote()
     private val store = MemoryStore()
-    private val emailSender = FakeEmailSender()
     private val clock = Clock.fixed(NOW, ZoneOffset.UTC)
 
     private fun repo() = AuthRepositoryImpl(
@@ -148,7 +177,6 @@ class AuthRepositoryImplTest {
         devices = FixedDevice(),
         deviceName = "Test phone",
         clock = clock,
-        emailSender = emailSender,
     )
 
     private fun signedInStore(expiresIn: Long = 3600, refresh: String = "r1", token: String = "s1") {
@@ -255,21 +283,18 @@ class AuthRepositoryImplTest {
     }
 
     @Test
-    fun adminSendAndVerifyCode_dispatchesEmailAndOnlyUpdatesDbAfterVerification() = runBlocking {
+    fun adminSendAndVerifyCode_dispatchesOnServerAndOnlyUpdatesDbAfterVerification() = runBlocking {
         signedInStore()
         val repository = repo()
 
         val sendRes = repository.sendVerificationCode("admin.new@hibiscuss.com")
         assertTrue(sendRes is AuthResult.Success)
-        assertEquals(1, emailSender.sent.size)
-        val dispatched = emailSender.sent.single()
-        assertEquals("admin.new@hibiscuss.com", dispatched.toEmail)
-        assertTrue(dispatched.isAdminSetup)
-        assertEquals(6, dispatched.code.length)
+        assertEquals(1, remote.sendVerificationCodeCalls)
+        assertEquals("admin.new@hibiscuss.com", remote.lastSentVerificationEmail)
         // DB must not be updated before code is verified
         assertEquals(0, remote.changePasswordCalls)
 
-        // Wrong code is rejected and DB is still untouched
+        // Wrong code is rejected by server and DB is still untouched
         val wrong = repository.verifyAndChangeAdminCredentials(
             userId = "u1",
             newEmail = "admin.new@hibiscuss.com",
@@ -279,12 +304,12 @@ class AuthRepositoryImplTest {
         assertTrue(wrong is AuthResult.Failure)
         assertEquals(0, remote.changePasswordCalls)
 
-        // Exact code sent via email is accepted, updates DB, and marks email verified
+        // Valid server code is accepted, updates DB, and marks email verified
         val right = repository.verifyAndChangeAdminCredentials(
             userId = "u1",
             newEmail = "admin.new@hibiscuss.com",
             newPassword = "NewPassword1!",
-            code = dispatched.code,
+            code = remote.expectedServerCode,
         )
         assertTrue(right is AuthResult.Success)
         assertEquals(1, remote.changePasswordCalls)
@@ -293,7 +318,7 @@ class AuthRepositoryImplTest {
     }
 
     @Test
-    fun signUpFlow_dispatchesEmailAndOnlyRegistersInDbAfterVerification() = runBlocking {
+    fun signUpFlow_requestsServerCodeAndOnlyRegistersInDbAfterVerification() = runBlocking {
         val repository = repo()
 
         val reqRes = repository.requestSignUpVerification(
@@ -303,28 +328,61 @@ class AuthRepositoryImplTest {
             password = "Password123!",
         )
         assertTrue(reqRes is AuthResult.Success)
-        assertEquals(1, emailSender.sent.size)
-        val firstEmail = emailSender.sent.first()
-        assertEquals("john.runner@example.com", firstEmail.toEmail)
-        assertFalse(firstEmail.isAdminSetup)
+        assertEquals(1, remote.requestSignUpCodeCalls)
+        assertEquals("john.runner@example.com", remote.lastRequestedSignUpEmail)
         // DB must not be touched before verification
         assertEquals(0, remote.registerCalls)
 
-        // Resend issues a fresh code without writing to DB
+        // Resend requests a fresh server code without writing to DB
         val resendRes = repository.resendSignUpVerificationCode("John.Runner@Example.com")
         assertTrue(resendRes is AuthResult.Success)
-        assertEquals(2, emailSender.sent.size)
+        assertEquals(2, remote.requestSignUpCodeCalls)
         assertEquals(0, remote.registerCalls)
-        val latestCode = emailSender.sent.last().code
 
-        // Wrong code fails and still does not write to DB
+        // Wrong code fails on server and still does not write to DB
         val wrongVerify = repository.verifySignUpEmail("john.runner@example.com", "000000")
         assertTrue(wrongVerify is AuthResult.Failure)
         assertEquals(0, remote.registerCalls)
 
-        // Correct code succeeds and now persists user to DB
-        val rightVerify = repository.verifySignUpEmail("john.runner@example.com", latestCode)
+        // Correct server code succeeds and now persists user to DB
+        val rightVerify = repository.verifySignUpEmail("john.runner@example.com", remote.expectedServerCode)
         assertTrue(rightVerify is AuthResult.Success)
         assertEquals(1, remote.registerCalls)
+    }
+
+    @Test
+    fun signUpFlow_survivesRepositoryRecreationWhenCheckingEmailApp() = runBlocking {
+        val initialRepo = repo()
+        initialRepo.requestSignUpVerification(
+            fullName = "John Runner",
+            email = "John.Runner@Example.com",
+            phone = "+27821234567",
+            password = "Password123!",
+        )
+
+        // Simulate process/repository recreation after returning from Email app
+        val recreatedRepo = repo()
+        val verifyRes = recreatedRepo.verifySignUpEmail("john.runner@example.com", remote.expectedServerCode)
+        assertTrue(verifyRes is AuthResult.Success)
+        assertEquals(1, remote.registerCalls)
+    }
+
+    @Test
+    fun requestSignUpVerification_whenEmailAlreadyExistsInDb_failsBeforeSendingEmail() = runBlocking {
+        remote.checkEmailBehaviour = {
+            AuthResult.Failure(AuthError("ALREADY_EXISTS", "That record already exists", 409))
+        }
+        val repository = repo()
+
+        val result = repository.requestSignUpVerification(
+            fullName = "John Runner",
+            email = "taken@example.com",
+            phone = "+27821234567",
+            password = "Password123!",
+        )
+
+        assertTrue(result is AuthResult.Failure)
+        assertEquals("An account with this email already exists.", (result as AuthResult.Failure).error.message)
+        assertEquals(0, remote.requestSignUpCodeCalls)
     }
 }

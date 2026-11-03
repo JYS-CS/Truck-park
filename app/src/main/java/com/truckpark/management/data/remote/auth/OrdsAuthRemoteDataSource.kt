@@ -7,6 +7,8 @@ import com.truckpark.management.data.remote.HttpResponse
 import com.truckpark.management.data.remote.HttpTransport
 import com.truckpark.management.domain.models.AuthSession
 import com.truckpark.management.domain.models.AuthUser
+import com.truckpark.management.domain.models.ManagedDevice
+import com.truckpark.management.domain.models.ManagedUser
 import com.truckpark.management.domain.models.SignInResult
 import java.io.IOException
 import java.time.Instant
@@ -86,12 +88,30 @@ class OrdsAuthRemoteDataSource(
     override suspend fun sendVerificationCode(sessionToken: String): AuthResult<Unit> =
         sendVerificationCode(sessionToken, null)
 
-    override suspend fun sendVerificationCode(sessionToken: String, code: String?): AuthResult<Unit> = call(
+    override suspend fun sendVerificationCode(sessionToken: String, email: String?): AuthResult<Unit> = call(
         path = "auth/send-verification-code",
         body = JSONObject().apply {
-            if (!code.isNullOrBlank()) put("code", code)
+            if (!email.isNullOrBlank()) put("email", email.trim().lowercase())
         },
         bearer = sessionToken,
+    ) { }
+
+    override suspend fun checkEmailAvailable(email: String): AuthResult<Unit> {
+        val result = call(
+            path = "auth/check-email",
+            body = JSONObject().put("email", email.trim().lowercase()),
+        ) { }
+        if (result is AuthResult.Failure && result.error.httpStatus == 404) {
+            return AuthResult.Success(Unit)
+        }
+        return result
+    }
+
+    override suspend fun requestSignUpCode(email: String, fullName: String): AuthResult<Unit> = call(
+        path = "auth/request-signup-code",
+        body = JSONObject()
+            .put("email", email.trim().lowercase())
+            .put("full_name", fullName.trim()),
     ) { }
 
     override suspend fun register(
@@ -114,11 +134,103 @@ class OrdsAuthRemoteDataSource(
         sessionToken: String,
         newEmail: String,
         newPassword: String,
+    ): AuthResult<Unit> = changePassword(sessionToken, newEmail, newPassword, null)
+
+    override suspend fun changePassword(
+        sessionToken: String,
+        newEmail: String,
+        newPassword: String,
+        code: String?,
     ): AuthResult<Unit> = call(
         path = "auth/change-password",
         body = JSONObject()
             .put("new_email", newEmail)
+            .put("new_password", newPassword)
+            .apply {
+                if (!code.isNullOrBlank()) put("code", code.trim())
+            },
+        bearer = sessionToken,
+    ) { }
+
+    override suspend fun requestPasswordReset(email: String): AuthResult<Unit> = call(
+        path = "auth/request-password-reset",
+        body = JSONObject().put("email", email.trim().lowercase()),
+    ) { }
+
+    override suspend fun resetPassword(
+        email: String,
+        code: String,
+        newPassword: String,
+    ): AuthResult<Unit> = call(
+        path = "auth/reset-password",
+        body = JSONObject()
+            .put("email", email.trim().lowercase())
+            .put("code", code.trim())
             .put("new_password", newPassword),
+    ) { }
+
+    override suspend fun listUsers(sessionToken: String, status: String?): AuthResult<List<ManagedUser>> {
+        val query = if (!status.isNullOrBlank()) "?status=${status.trim().uppercase()}" else ""
+        return call(
+            method = "GET",
+            path = "admin/users$query",
+            bearer = sessionToken,
+        ) { json ->
+            val items = json.optJSONArray("items")
+            List(items?.length() ?: 0) { i ->
+                val obj = items!!.getJSONObject(i)
+                ManagedUser(
+                    id = obj.getString("id"),
+                    fullName = obj.optString("full_name", "Staff"),
+                    email = obj.optString("email", ""),
+                    phone = obj.optString("phone", ""),
+                    status = obj.optString("status", "APPROVED"),
+                    role = obj.optString("role", "RUNNER").ifBlank { "RUNNER" },
+                )
+            }
+        }
+    }
+
+    override suspend fun updateUserRole(
+        sessionToken: String,
+        userId: String,
+        roleCode: String,
+    ): AuthResult<Unit> = call(
+        path = "admin/users/${userId.trim()}/approve",
+        body = JSONObject().put("role_code", roleCode.trim().uppercase()),
+        bearer = sessionToken,
+    ) { }
+
+    override suspend fun listDevices(sessionToken: String): AuthResult<List<ManagedDevice>> = call(
+        method = "GET",
+        path = "admin/devices",
+        bearer = sessionToken,
+    ) { json ->
+        val items = json.optJSONArray("items")
+        List(items?.length() ?: 0) { i ->
+            val obj = items!!.getJSONObject(i)
+            ManagedDevice(
+                id = obj.getString("id"),
+                userId = obj.optString("user_id", ""),
+                userName = obj.optString("user_name", "Staff"),
+                userEmail = obj.optString("user_email", ""),
+                name = obj.optString("name", "Android Handset").ifBlank { "Android Handset" },
+                registeredAt = obj.optString("registered_at").ifBlank { null },
+                lastSeenAt = obj.optString("last_seen_at").ifBlank { null },
+                revokedAt = obj.optString("revoked_at").ifBlank { null },
+                revokeReason = obj.optString("revoke_reason").ifBlank { null },
+                isCurrentDevice = obj.optBoolean("is_current_device", false),
+            )
+        }
+    }
+
+    override suspend fun revokeDevice(
+        sessionToken: String,
+        deviceId: String,
+        reason: String,
+    ): AuthResult<Unit> = call(
+        path = "admin/devices/${deviceId.trim()}/revoke",
+        body = JSONObject().put("reason", reason.trim()),
         bearer = sessionToken,
     ) { }
 

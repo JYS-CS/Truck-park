@@ -333,7 +333,7 @@ fun EmailCodeVerification(
                     errorMessage = null
                 } else {
                     otpState = OtpState.Error
-                    errorMessage = "Invalid or expired code."
+                    errorMessage = error.ifBlank { "Invalid or expired code." }
                 }
             }
         }
@@ -517,8 +517,8 @@ fun EmailCodeVerification(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // Resend footer — only shown in Idle (not during error; user already got a code)
-            if (otpState == OtpState.Idle) {
+            // Resend footer — shown in Idle and Error so the user can always request a fresh code
+            if (otpState != OtpState.Success) {
                 val onCooldown = resendCooldownSeconds > 0
                 val resendEnabled = !checking && !onCooldown
                 Row(
@@ -537,7 +537,10 @@ fun EmailCodeVerification(
                                 enabled = resendEnabled,
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null,
-                            ) { onResend() }
+                            ) {
+                                resetForRetry()
+                                onResend()
+                            }
                             .padding(horizontal = 6.dp, vertical = 8.dp),
                         contentAlignment = Alignment.Center,
                     ) {

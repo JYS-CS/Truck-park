@@ -119,14 +119,26 @@ class OrdsAuthRemoteDataSourceTest {
     }
 
     @Test
-    fun sendVerificationCode_includesCodeInPayloadWhenProvided() = runBlocking {
+    fun sendVerificationCode_includesEmailInPayloadWhenProvided() = runBlocking {
         val transport = FakeTransport { HttpResponse(200, """{"status":"SENT"}""") }
-        source(transport).sendVerificationCode("tok-admin", "654321")
+        source(transport).sendVerificationCode("tok-admin", "admin.new@hibiscuss.com")
 
         val request = transport.requests.single()
         assertEquals("https://host/ords/truckpark/v1/auth/send-verification-code", request.url)
         assertEquals("Bearer tok-admin", request.headers["Authorization"])
-        assertEquals("654321", JSONObject(request.body!!).getString("code"))
+        assertEquals("admin.new@hibiscuss.com", JSONObject(request.body!!).getString("email"))
+    }
+
+    @Test
+    fun requestSignUpCode_postsEmailAndNameToRequestSignUpCodeEndpoint() = runBlocking {
+        val transport = FakeTransport { HttpResponse(200, """{"status":"SENT"}""") }
+        source(transport).requestSignUpCode("jane@x.com", "Jane Runner")
+
+        val request = transport.requests.single()
+        assertEquals("https://host/ords/truckpark/v1/auth/request-signup-code", request.url)
+        val body = JSONObject(request.body!!)
+        assertEquals("jane@x.com", body.getString("email"))
+        assertEquals("Jane Runner", body.getString("full_name"))
     }
 
     @Test
@@ -142,5 +154,41 @@ class OrdsAuthRemoteDataSourceTest {
         assertEquals("Jane Runner", body.getString("full_name"))
         assertEquals("jane@x.com", body.getString("email"))
         assertEquals("112233", body.getString("code"))
+    }
+
+    @Test
+    fun listDevices_parsesDeviceListAndCurrentDeviceFlag() = runBlocking {
+        val devicesJson = """
+            {"items":[
+                {"id":"dev-1","user_id":"u1","user_name":"Ada Admin","user_email":"a@x.com",
+                 "name":"Pixel 8","registered_at":"2026-10-30T00:00:00Z","last_seen_at":"2026-10-30T01:00:00Z",
+                 "is_current_device":true}
+            ],"request_id":"r1"}
+        """.trimIndent()
+        val transport = FakeTransport { HttpResponse(200, devicesJson) }
+        val res = source(transport).listDevices("tok-admin") as AuthResult.Success
+
+        assertEquals(1, res.value.size)
+        val device = res.value.single()
+        assertEquals("dev-1", device.id)
+        assertEquals("Pixel 8", device.name)
+        assertEquals("Ada Admin", device.userName)
+        assertTrue(device.isCurrentDevice)
+        val request = transport.requests.single()
+        assertEquals("GET", request.method)
+        assertEquals("https://host/ords/truckpark/v1/admin/devices", request.url)
+        assertEquals("Bearer tok-admin", request.headers["Authorization"])
+    }
+
+    @Test
+    fun revokeDevice_postsReasonToRevokeEndpoint() = runBlocking {
+        val transport = FakeTransport { HttpResponse(200, """{"ok":true}""") }
+        val res = source(transport).revokeDevice("tok-admin", "dev-99", "Lost or stolen handset")
+
+        assertTrue(res is AuthResult.Success)
+        val request = transport.requests.single()
+        assertEquals("POST", request.method)
+        assertEquals("https://host/ords/truckpark/v1/admin/devices/dev-99/revoke", request.url)
+        assertEquals("Lost or stolen handset", JSONObject(request.body!!).getString("reason"))
     }
 }

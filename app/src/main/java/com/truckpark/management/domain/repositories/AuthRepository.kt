@@ -2,6 +2,8 @@ package com.truckpark.management.domain.repositories
 
 import com.truckpark.management.core.common.AuthResult
 import com.truckpark.management.domain.models.AuthUser
+import com.truckpark.management.domain.models.ManagedDevice
+import com.truckpark.management.domain.models.ManagedUser
 import com.truckpark.management.domain.models.SignInResult
 
 /**
@@ -30,5 +32,11 @@ interface AuthRepository {
     ): AuthResult<Unit>
     suspend fun resendSignUpVerificationCode(email: String): AuthResult<Unit>
     suspend fun verifySignUpEmail(email: String, code: String): AuthResult<Unit>
+    suspend fun requestPasswordReset(email: String): AuthResult<Unit>
+    suspend fun resetPassword(email: String, code: String, newPassword: String): AuthResult<Unit>
+    suspend fun listUsers(status: String? = null): AuthResult<List<ManagedUser>>
+    suspend fun updateUserRole(userId: String, roleCode: String): AuthResult<Unit>
+    suspend fun listDevices(): AuthResult<List<ManagedDevice>>
+    suspend fun revokeDevice(deviceId: String, reason: String): AuthResult<Unit>
     fun hasStoredSession(): Boolean
 }

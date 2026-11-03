@@ -1,6 +1,6 @@
 # Remaining Work
 
-This file lists what the app still needs, based on the master development prompt. Milestone 1 (foundation) is complete. Everything else below is not built yet.
+This file lists what has been completed and what the app still needs, based on the master development prompt. **Milestone 1 (Foundation)** and **Milestone 2 (Authentication, Verification, Roles & Admin Access Control)** are built.
 
 ## Where we are
 
@@ -8,28 +8,36 @@ This file lists what the app still needs, based on the master development prompt
 |---|---|
 | Project setup, theme (Light / Dark / System), navigation shell | Done |
 | Hibiscus branding, splash, app icon | Done |
-| Placeholder screens for Home, Visits, Registers, Reports | Done (no data) |
-| Anything that stores, syncs or authorizes data | Not started |
+| Oracle ADB + ORDS backend (`PKG_CRYPTO`, `PKG_AUTHZ`, `PKG_AUTH`, `PKG_ADMIN`, `PKG_API`) | Done |
+| Server-side 6-digit email verification & Brevo transactional emails (`UTL_SMTP` / `UTL_HTTP`) | Done |
+| Pre-verification account hygiene (no `users` / `auth_identities` rows until OTP is verified) | Done |
+| Bootstrap Admin Security Setup gate (`admin@hibiscuss.com` / `must_change_password`) | Done |
+| Self-registration auto-approval as `RUNNER` + immediate sign-in | Done |
+| Live Admin Staff Role Management (`RUNNER`, `SUPERVISOR`, `ADMIN`) & Role-Adaptive UI | Done |
+| Keystore-encrypted session storage, Sign Out, and live role sync | Done |
+| Truck visits, registers, local Room sync, attendance, alerts, PDF reports (Milestones 3–12) | Not started |
 
-## Decisions needed first
+## Decisions resolved vs. still open
 
-These block later milestones. Decide them before coding past Milestone 1.
-
-1. **Backend provider.** Options to compare: Supabase, a custom PostgreSQL API, or another managed service. Evaluate authentication, PostgreSQL, a secure API and file storage. Do not assume the backend solves offline sync; the sync protocol must be designed explicitly.
-2. **Brand palette.** Confirm the final colours. The current code uses slate and indigo. The earlier brass and serif direction is kept on `classic-ui` only.
-3. **Splash in Light mode.** Check the emblem and wordmark artwork on the light splash. A light variant may be needed.
-4. **Staff notice wording** for app-activity monitoring (Milestone 7). Needs HR or management sign-off.
+1. **Backend provider (Resolved):** Oracle Autonomous Database (ADB) + Oracle REST Data Services (ORDS) + Brevo transactional email.
+2. **Admin role management UI (Resolved):** Built inside the Android app on the Admin Home tab (`AdminRoleManagementCard`), backed by server-side `user.approve` permission enforcement.
+3. **Brand palette:** Current code uses slate and indigo (`Color.kt`).
+4. **Splash in Light mode:** Check emblem and wordmark contrast on physical devices.
+5. **Staff notice wording** for app-activity monitoring (Milestone 7): Needs HR or management sign-off.
 
 ## Milestones
 
-### 2. Authentication, account approval and permissions
-- Individual staff accounts only (no shared accounts).
-- Roles: Admin, Supervisor, Runner, with role defaults and per-person exceptions.
-- Account requests: Pending Submission, Pending Approval, Approved, Rejected. Applicants cannot approve themselves.
-- Device limits per staff member, with Admin exceptions and device revocation.
-- Offline sign-in with an Admin-set validity period. Online revalidation of accounts, devices and roles.
-- Server-side permission checks on every action. Hiding a button is not authorization.
-- Audit trail for permission changes (actor, time, reason, before and after).
+### 2. Authentication, account approval and permissions (Core Built)
+- **Built:**
+  - Individual staff accounts with PBKDF2-HMAC-SHA256 (600,000 iterations) in Oracle PL/SQL.
+  - Pre-signup email check (`auth/check-email` & `auth/request-signup-code`) so duplicate emails are rejected before entering a verification code, and unverified accounts never pollute `users`.
+  - Default auto-approval as `RUNNER` upon email verification with automatic sign-in.
+  - Bootstrap Admin Security Setup gate requiring email verification before updating initial admin credentials.
+  - Roles (`ADMIN`, `SUPERVISOR`, `RUNNER`) with server-side permission checks (`PKG_AUTHZ.require_permission`), Admin role switching (`admin/users/:id/approve`), and role-adaptive UI tabs/workspaces.
+  - Self-service password reset (`auth/request-password-reset` & `auth/reset-password`) and device revocation (`admin/devices/:id/revoke`).
+  - Immutable `audit_events` logging actor, time, and before/after states.
+- **Remaining in Milestone 2:**
+  - Per-user maximum device count enforcement UI and Admin per-person permission exception UI (`user_permission_exceptions` table is already in `schema.sql`).
 
 ### 3. Truck visits and vehicles
 - Visit types: Quick, Overnight, Transit, Loading or unloading, Other.
@@ -83,8 +91,8 @@ These block later milestones. Decide them before coding past Milestone 1.
 - Android notifications only where permission and system settings allow.
 
 ### 10. Dashboards and search
-- Role dashboards:
-  - **Admin:** active trucks, arrivals and departures, pending account requests, incidents and critical alerts, inspection failures, open actions, sync health, admin shortcuts.
+- Role dashboards (initial role workspace cards and Admin role management panel are in place; live operational metrics will connect as Milestones 3–9 land):
+  - **Admin:** active trucks, arrivals and departures, staff role management, incidents and critical alerts, inspection failures, open actions, sync health, admin shortcuts.
   - **Supervisor:** active visits, long-stay warnings, incidents to investigate, failed inspections, attendance exceptions, handovers.
   - **Runner:** record arrival and departure, active visits, register visitor, report incident, sync status.
 - Widgets configurable per role. Configuration never grants permissions.
@@ -120,8 +128,6 @@ These block later milestones. Decide them before coding past Milestone 1.
 
 - Shrinking and obfuscation are off for release builds. Turn on before any release.
 - Blur is layered gradients only; no real backdrop blur.
-- Light-mode splash artwork is unchecked.
+- Light-mode splash artwork contrast should be verified on target handsets.
 - Splash shows on every cold start.
-- Hard-coded colours outside the theme file (bottom bar, splash).
-- No unit tests beyond the theme logic.
-- Nothing has been run on a device by anyone other than the project owner.
+- Operational tabs (Visits, Registers, Reports) show role-aware workspace previews until Milestones 3–11 are implemented.

@@ -23,15 +23,6 @@ object AppConfig {
     const val ORDS_API_VERSION: String = BuildConfig.ORDS_API_VERSION
 
     /**
-     * Brevo transactional SMTP relay settings from .env.
-     */
-    const val BREVO_SMTP_HOST: String = BuildConfig.BREVO_SMTP_HOST
-    const val BREVO_SMTP_PORT: Int = BuildConfig.BREVO_SMTP_PORT
-    const val BREVO_SMTP_LOGIN: String = BuildConfig.BREVO_SMTP_LOGIN
-    const val BREVO_SMTP_KEY: String = BuildConfig.BREVO_SMTP_KEY
-    const val BREVO_SENDER_EMAIL: String = BuildConfig.BREVO_SENDER_EMAIL
-
-    /**
      * Fully qualified base URL for API network requests:
      * e.g. https://gf339ddde581301-hibiscusstruckpark.adb.af-johannesburg-1.oraclecloudapps.com/ords/admin/v1/
      */

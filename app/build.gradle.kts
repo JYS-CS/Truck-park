@@ -21,11 +21,6 @@ val ordsBaseUrl: String = envProperties.getProperty("ORDS_BASE_URL")
     ?: "https://gf339ddde581301-hibiscusstruckpark.adb.af-johannesburg-1.oraclecloudapps.com/ords/"
 val ordsModulePath: String = envProperties.getProperty("ORDS_MODULE_PATH") ?: "admin"
 val ordsApiVersion: String = envProperties.getProperty("ORDS_API_VERSION") ?: "v1"
-val brevoSmtpHost: String = envProperties.getProperty("BREVO_SMTP_HOST") ?: "smtp-relay.brevo.com"
-val brevoSmtpPort: Int = (envProperties.getProperty("BREVO_SMTP_PORT") ?: "587").toIntOrNull() ?: 587
-val brevoSmtpLogin: String = envProperties.getProperty("BREVO_SMTP_LOGIN") ?: ""
-val brevoSmtpKey: String = envProperties.getProperty("BREVO_SMTP_KEY") ?: ""
-val brevoSenderEmail: String = envProperties.getProperty("BREVO_SENDER_EMAIL") ?: ""
 
 android {
     namespace = "com.truckpark.management"
@@ -41,11 +36,6 @@ android {
         buildConfigField("String", "ORDS_BASE_URL", "\"$ordsBaseUrl\"")
         buildConfigField("String", "ORDS_MODULE_PATH", "\"$ordsModulePath\"")
         buildConfigField("String", "ORDS_API_VERSION", "\"$ordsApiVersion\"")
-        buildConfigField("String", "BREVO_SMTP_HOST", "\"$brevoSmtpHost\"")
-        buildConfigField("int", "BREVO_SMTP_PORT", "$brevoSmtpPort")
-        buildConfigField("String", "BREVO_SMTP_LOGIN", "\"$brevoSmtpLogin\"")
-        buildConfigField("String", "BREVO_SMTP_KEY", "\"$brevoSmtpKey\"")
-        buildConfigField("String", "BREVO_SENDER_EMAIL", "\"$brevoSenderEmail\"")
     }
 
     buildTypes {

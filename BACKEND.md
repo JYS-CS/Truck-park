@@ -1,31 +1,28 @@
-# Backend Plan (ORDS-only, for review)
+# Backend Architecture (Oracle ADB + ORDS)
 
-Status: **proposal, not built.** Decisions marked **[DECIDE]** need your sign-off before implementation.
+Status: **Phase 1 (Identity, Verification, Email Dispatch & RBAC) Built.** Operations & Sync (§6–§7) are planned for Milestones 3–4.
 
 ## 0. What changed from the earlier draft
 
 - No custom API server. The phone app talks only to **ORDS** (Oracle REST Data Services) on the Autonomous Database.
-- No APEX. Admin screens are built by us (see §1 and the open decision on where they live).
-- Business rules, permissions and sync logic live in **PL/SQL packages** behind ORDS, not in a Kotlin or Node service.
-- Sessions use our own opaque tokens stored in the database, not JWTs, so an Admin can revoke a device instantly.
-- Password hashing moves into the database layer (see §3). Argon2id is not available in Oracle; this is a decision.
-- Email sending is a small separate job (see §9). It is the only component outside Oracle and ORDS, besides Brevo.
+- No APEX. Admin role management screens are built directly inside the Android app and gated by `ADMIN` role permissions.
+- Business rules, permissions and sync logic live in **PL/SQL packages** behind ORDS (`PKG_CRYPTO`, `PKG_AUTHZ`, `PKG_AUTH`, `PKG_ADMIN`, `PKG_API`).
+- Sessions use our own opaque tokens stored in the database, not JWTs, so an Admin can revoke a device or update a role instantly.
+- Password hashing lives in the database layer (`PBKDF2-HMAC-SHA-256`, 600,000 iterations).
+- Email sending runs directly from PL/SQL (`PKG_API`) using Oracle's default wallet via Brevo SMTP Relay (`UTL_SMTP` STARTTLS on port 587) or Brevo REST API (`UTL_HTTP` on port 443), while recording audit/outbox rows in `email_outbox`. No SMTP credentials exist in the Android client.
 
 ## 1. Overview
 
 ```
-Android app ──HTTPS/JSON──▶ ORDS modules ──▶ PL/SQL packages ──▶ Oracle Autonomous DB
-Admin screens ──HTTPS/JSON──▶ (same ORDS modules, role-checked)        │
-                                                                        │ outbox rows
-Email sender (timer-triggered job) ◀────────────────────────────────────┘
-      │
-      └──HTTPS──▶ Brevo (transactional email)
+Android app ──HTTPS/JSON──▶ ORDS modules ──▶ PL/SQL packages (PKG_API / PKG_AUTH) ──▶ Oracle Autonomous DB
+Admin screens (in-app) ───▶ (same ORDS modules, role-checked)                            │
+                                                                                         │ email_outbox + UTL_SMTP/UTL_HTTP
+Brevo (transactional email) ◀──────────────HTTPS / STARTTLS──────────────────────────────┘
 ```
 
 - The app never connects to the database directly and never reads tables. It calls ORDS modules only.
-- ORDS handlers are thin: each one calls one PL/SQL procedure. All permission checks, device checks and business rules run in the database.
-- Admin screens: **[DECIDE]** either (a) inside the Android app, shown only to users whose role allows it, or (b) a separate web page (plain HTML and JavaScript) that calls the same ORDS modules. Option (a) is the smaller build. Option (b) suits large tables and reports on a computer, but needs its own sign-in page and hosting (for example HelioHost or another static host).
-- Whichever option is chosen, the database enforces the rules. The screens only hide buttons.
+- ORDS handlers are thin: each one calls one PL/SQL procedure in `PKG_API_HTTP` / `PKG_API`. All permission checks, device checks and business rules run in the database.
+- Admin screens live inside the Android app (`AdminRoleManagementCard` on the Home tab for `ADMIN` users) and every action is enforced on the server via `PKG_AUTHZ.require_permission`.
 
 ## 2. Database layout and tooling
 
@@ -46,21 +43,26 @@ Email sender (timer-triggered job) ◀──────────────
   - `PKG_ADMIN`: approvals, roles, devices, audit reads.
   - `PKG_EMAIL`: writes to `email_outbox` and claims rows for the sender.
 
-## 3. Sign-in (phase 1: email and password only)
+## 3. Sign-in, Self-Registration & Verification (phase 1: email and password)
 
-> **Detailed Specification:** For the complete, standalone architecture and schema for authentication, sessions, devices, and RBAC, see [IDENTITY_AND_ACCESS.md](file:///home/falcon/Desktop/TruckPark/IDENTITY_AND_ACCESS.md).
+> **Detailed Specification:** For the complete, standalone architecture and schema for authentication, sessions, devices, and RBAC, see [IDENTITY_AND_ACCESS.md](file:///sdcard/project/TruckPark/IDENTITY_AND_ACCESS.md).
 
-- Sign-up is **invite only**. An Admin creates an invite for an email address and a proposed role.
-- The invite link is single-use and expires after 72 hours (**[DECIDE]**). Only the SHA-256 hash of the link token is stored.
-- The person sets a password, then verifies their email with a 6-digit code (expires after 15 minutes, max 5 attempts).
-- The account then sits in **Pending Approval** until an Admin confirms the role.
-- Passwords are hashed with **PBKDF2-HMAC-SHA-256**, 600,000 iterations, a 16-byte random salt per user, implemented in `PKG_CRYPTO` with `DBMS_CRYPTO.MAC`. Minimum 12 characters. Never logged, never returned by any endpoint.
-  - *Why not Argon2id:* Oracle has no built-in Argon2. The alternative is to hash in the email sender or another service, which adds a network hop and another secret. PBKDF2 is the proposed choice. **[DECIDE]**
-  - The iteration count must be load-tested on the ADB tier. A login should take well under a second.
+- **Self-Registration with Pre-Verification Hygiene:**
+  1. When a user presses **Create Account**, the app calls `POST /auth/request-signup-code` with their email and full name.
+  2. `PKG_API.request_signup_code` checks `users` first and immediately returns `409 ALREADY_EXISTS` if the email is already registered (before advancing to the 6-digit code screen).
+  3. If available, the server generates a 6-digit code via `DBMS_CRYPTO.RANDOMBYTES`, stores only its SHA-256 hash and 15-minute expiry in `email_outbox` (`template = 'VERIFY_SIGNUP'`), and dispatches the email via Brevo. **Nothing is written to `users` or `auth_identities` until the code is verified.**
+  4. When the user submits the 6-digit code to `POST /auth/register`, `PKG_API.register` validates the hash, creates the `users` row (`status = 'APPROVED'`, `email_verified_at = SYSTIMESTAMP`, `phone`), creates the `auth_identities` row, and assigns the default `RUNNER` role so the user is automatically signed in.
+- **Admin Role Management & Invites:**
+  - Admins can view all staff via `GET /admin/users` and update any user's role (`RUNNER`, `SUPERVISOR`, `ADMIN`) via `POST /admin/users/{id}/approve`.
+  - Admins can also issue single-use 72-hour email invitations (`POST /admin/invites` → `POST /auth/accept-invite`).
+- **Bootstrap Admin Security Setup Gate:**
+  - The initial seeded admin (`admin@hibiscuss.com` / `@Admin`) has `must_change_password = 1`.
+  - Signing in redirects to the Admin Security Setup screen, which sends a 6-digit code to the new admin email (`POST /auth/send-verification-code`) and verifies it on the server (`POST /auth/change-password`) before updating `users.email` or `auth_identities`.
+- Passwords are hashed with **PBKDF2-HMAC-SHA-256**, 600,000 iterations, a 16-byte random salt per user, implemented in `PKG_CRYPTO` with `DBMS_CRYPTO.MAC`. Minimum 8 characters with uppercase, lowercase, digit, and special character. Never logged, never returned by any endpoint.
 - Login lockout: 5 failed attempts per account in 15 minutes, then locked for 15 minutes. Counters live in `auth_identities`, so they work across all devices.
-- Password reset: single-use 6-digit code, expires after 15 minutes. On success, every session for that user is revoked.
+- Password reset: single-use 6-digit code (`POST /auth/request-password-reset` & `POST /auth/reset-password`), expires after 15 minutes. On success, every session and refresh token for that user is revoked.
 - Per-IP rate limiting is not built into ORDS. Add an OCI WAF rate rule on `/auth/*` (see §10).
-- Google sign-in is added later as a second row in `auth_identities`. `users` does not change.
+- Google sign-in can be added later as a second row in `auth_identities`. `users` does not change.
 
 ### Sessions and tokens
 
@@ -308,42 +310,45 @@ Both calls are ORDS modules. Each one passes the body or query string to a singl
 
 **Retries:** exponential backoff, capped at 10 minutes. The same `op_id` is reused, so a retry is always safe.
 
-## 8. ORDS endpoints (phase 1)
+## 8. ORDS endpoints (phase 1 — built)
 
-Base path: `https://gf339ddde581301-hibiscusstruckpark.adb.af-johannesburg-1.oraclecloudapps.com/ords/truckpark/v1/`
+Base path: `https://gf339ddde581301-hibiscusstruckpark.adb.af-johannesburg-1.oraclecloudapps.com/ords/admin/v1/`
 
 | Method | Path | Sign-in | Purpose |
 |---|---|---|---|
-| POST | `/auth/accept-invite` | no | Set password from invite link |
-| POST | `/auth/login` | no | Email and password; returns session, refresh token and `offline_valid_until` |
-| POST | `/auth/verify-email` | no | Submit 6-digit code |
+| POST | `/auth/login` | no | Email and password; returns session, refresh token, `offline_valid_until`, and `must_change_password` |
 | POST | `/auth/refresh` | refresh token | Rotate tokens |
-| POST | `/auth/logout` | yes | Revoke current device |
-| POST | `/auth/password-reset/request` | no | Send reset code (always returns 200) |
-| POST | `/auth/password-reset/confirm` | no | Set new password, revoke sessions |
-| GET | `/me` | yes | Current user, status, roles, permissions, `offline_valid_until` |
-| POST | `/admin/invites` | yes, `user.invite` | Create invite |
-| GET | `/admin/users?status=PENDING_APPROVAL` | yes, `user.approve` | Approval queue |
-| POST | `/admin/users/{id}/approve` | yes, `user.approve` | Assign role(s) and approve |
-| POST | `/admin/users/{id}/reject` | yes, `user.approve` | Reject with reason |
-| POST | `/admin/users/{id}/deactivate` | yes, `user.deactivate` | Immediate or scheduled |
-| GET | `/admin/devices` | yes, `device.manage` | List devices |
+| POST | `/auth/check-email` | no | Check if email is already registered (`409 ALREADY_EXISTS` if taken) |
+| POST | `/auth/request-signup-code` | no | Check email availability, generate 6-digit code in `email_outbox`, and send via Brevo |
+| POST | `/auth/register` | no | Verify 6-digit signup code and create `APPROVED` account with default `RUNNER` role |
+| POST | `/auth/accept-invite` | no | Set password from invite link |
+| POST | `/auth/verify-email` | no | Submit 6-digit code for invite-based registration |
+| POST | `/auth/send-verification-code` | yes | Send 6-digit verification code for Admin Security Setup |
+| POST | `/auth/change-password` | yes | Verify 6-digit code and update Admin email & password |
+| POST | `/auth/request-password-reset` | no | Send 6-digit password reset code via Brevo (always returns 200 for valid email format) |
+| POST | `/auth/reset-password` | no | Verify reset code, set new password, revoke all active sessions |
+| POST | `/auth/logout` | yes | Revoke current session |
+| GET | `/me` | yes | Current user, status, roles, permissions, `must_change_password` |
+| POST | `/admin/invites` | yes, `user.invite` | Create invite and email link via Brevo |
+| GET | `/admin/users?status=` | yes, `user.approve` | List staff accounts (`ALL` by default, or filtered by status) with role and phone |
+| POST | `/admin/users/{id}/approve` | yes, `user.approve` | Approve user or update role (`RUNNER`, `SUPERVISOR`, `ADMIN`) and notify via Brevo |
+| POST | `/admin/users/{id}/reject` | yes, `user.approve` | Reject with reason and notify via Brevo |
+| POST | `/admin/users/{id}/deactivate` | yes, `user.deactivate` | Immediate or scheduled deactivation |
 | POST | `/admin/devices/{id}/revoke` | yes, `device.manage` | Revoke device and its sessions |
-| GET | `/admin/email-outbox?status=FAILED` | yes, `admin.view_email` | Failed sends |
-| GET | `/admin/audit` | yes, `audit.view` | Audit trail |
-| POST | `/sync/push` | yes | Batched operations |
-| GET | `/sync/pull` | yes | Changes since cursor |
+| POST | `/sync/push` | yes | Batched operations (planned for Milestone 4) |
+| GET | `/sync/pull` | yes | Changes since cursor (planned for Milestone 4) |
 
 Every response includes a `request_id`. Errors use one format: `{ "code": "...", "message": "...", "request_id": "..." }`, with the matching HTTP status. Each handler wraps its PL/SQL call so unexpected errors become `INTERNAL_ERROR` without leaking SQL text.
 
 ## 9. Email and secrets
 
-**Sender:** a small job, run by an OCI Function on a timer (every minute, proposed), outside the database.
-1. PL/SQL writes a row to `email_outbox` with status `QUEUED` and a template name with variables. It never contains a password or a raw token.
-2. The sender calls `PKG_EMAIL.claim_batch`, which selects `QUEUED` or due `FAILED` rows with `FOR UPDATE SKIP LOCKED`, sets them to `SENDING`, and returns them.
-3. The sender posts each one to the Brevo transactional API, then records `SENT` (with the Brevo message id) or `FAILED` (with the error and a retry time).
-4. Rows stuck in `SENDING` for more than 10 minutes are returned to `QUEUED` by the same claim routine.
-5. Admins see failures through `/admin/email-outbox`.
+**In-Database PL/SQL Sender (`PKG_API`):**
+1. PL/SQL writes a row to `email_outbox` with status `QUEUED` and template metadata. Raw verification codes and passwords are never stored in `email_outbox.payload` (only SHA-256 hashes where verification is needed).
+2. `PKG_API` immediately dispatches the email from Oracle Autonomous Database using its built-in TLS wallet:
+   - If `C_SMTP_KEY` starts with `xsmtpsib-` and `C_SMTP_LOGIN` is configured, it sends via Brevo SMTP Relay (`smtp-relay.brevo.com:587` with `UTL_SMTP.STARTTLS`).
+   - If `C_SMTP_KEY` starts with `xkeysib-`, it posts to the Brevo HTTPS REST API (`https://api.brevo.com/v3/smtp/email` via `UTL_HTTP`).
+3. On success, `email_outbox.status` is updated to `SENT`; on error, `FAILED` and `last_error` are recorded for audit inspection.
+4. Network ACLs for `smtp-relay.brevo.com` (port 587) and `api.brevo.com` (port 443) are configured automatically in `backend/ords/02_ords_module.sql`.
 
 **Templates:** invite, verify email (code), account request received, approved (with role), rejected (with reason), password reset (code), device revoked (security notice).
 

@@ -9,6 +9,8 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.truckpark.management.app.TruckParkApplication
 import com.truckpark.management.core.common.AuthResult
 import com.truckpark.management.domain.models.AuthUser
+import com.truckpark.management.domain.models.ManagedDevice
+import com.truckpark.management.domain.models.ManagedUser
 import com.truckpark.management.domain.repositories.AuthRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -49,8 +51,7 @@ class AuthViewModel(
             when (val result = authRepository.currentUser()) {
                 is AuthResult.Success -> {
                     val user = result.value
-                    val isAdmin = user.roles.contains("ADMIN")
-                    if (isAdmin && (!user.emailVerified || user.mustChangePassword)) {
+                    if (user.isAdminSetupRequired) {
                         _uiState.value = AuthUiState.AdminSecuritySetup(
                             user = user,
                             emailVerified = user.emailVerified,
@@ -74,12 +75,9 @@ class AuthViewModel(
             when (val result = authRepository.signIn(email, password)) {
                 is AuthResult.Success -> {
                     val user = result.value.user
-                    val isAdmin = user.roles.contains("ADMIN")
-                    // An admin on the setup password or with an unverified email MUST pass security setup.
-                    // The server decides via mustChangePassword; the app never compares passwords.
-                    val needsSecurityGate = isAdmin && (!user.emailVerified || user.mustChangePassword)
-
-                    if (needsSecurityGate) {
+                    // An account on the default setup credentials (mustChangePassword) or unverified admin
+                    // MUST pass security setup. The backend decides via mustChangePassword / emailVerified.
+                    if (user.isAdminSetupRequired) {
                         _uiState.value = AuthUiState.AdminSecuritySetup(
                             user = user,
                             emailVerified = user.emailVerified,
@@ -172,6 +170,72 @@ class AuthViewModel(
         }
     }
 
+    fun requestPasswordReset(
+        email: String,
+        onComplete: (AuthResult<Unit>) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val result = authRepository.requestPasswordReset(email)
+            onComplete(result)
+        }
+    }
+
+    fun resetPassword(
+        email: String,
+        code: String,
+        newPassword: String,
+        onComplete: (AuthResult<Unit>) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val result = authRepository.resetPassword(email, code, newPassword)
+            onComplete(result)
+        }
+    }
+
+    fun loadManagedUsers(
+        onComplete: (AuthResult<List<ManagedUser>>) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val result = authRepository.listUsers()
+            onComplete(result)
+        }
+    }
+
+    fun updateUserRole(
+        userId: String,
+        roleCode: String,
+        onComplete: (AuthResult<Unit>) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val result = authRepository.updateUserRole(userId, roleCode)
+            val current = _uiState.value
+            if (result is AuthResult.Success && current is AuthUiState.Authenticated && current.user.id == userId) {
+                checkCurrentSession()
+            }
+            onComplete(result)
+        }
+    }
+
+    fun loadManagedDevices(
+        onComplete: (AuthResult<List<ManagedDevice>>) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val result = authRepository.listDevices()
+            onComplete(result)
+        }
+    }
+
+    fun revokeDevice(
+        deviceId: String,
+        reason: String,
+        onComplete: (AuthResult<Unit>) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val result = authRepository.revokeDevice(deviceId, reason)
+            onComplete(result)
+        }
+    }
+
     fun verifyEmail(
         code: String,
         newEmail: String? = null,
@@ -220,20 +284,6 @@ class AuthViewModel(
             )
             _uiState.value = AuthUiState.Authenticated(updatedUser)
         }
-    }
-
-    fun registerUser(fullName: String, email: String) {
-        val user = AuthUser(
-            id = "usr_" + System.currentTimeMillis(),
-            fullName = fullName.ifBlank { "Operator" },
-            email = email.ifBlank { "operator@hibiscuss.com" },
-            status = "APPROVED",
-            emailVerified = true,
-            roles = listOf("OPERATOR"),
-            permissions = setOf("READ", "WRITE"),
-            mustChangePassword = false,
-        )
-        _uiState.value = AuthUiState.Authenticated(user)
     }
 
     fun signOut() {

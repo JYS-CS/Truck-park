@@ -97,6 +97,9 @@ class MainActivity : ComponentActivity() {
                             TruckParkAppRoot(
                                 themeMode = mode,
                                 onThemeModeSelected = themeViewModel::select,
+                                user = state.user,
+                                authViewModel = authViewModel,
+                                onSignOut = authViewModel::signOut,
                             )
                         }
                         else -> {
