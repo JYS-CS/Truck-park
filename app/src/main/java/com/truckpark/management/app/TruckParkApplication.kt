@@ -10,6 +10,8 @@ import com.truckpark.management.data.local.ThemePreferencesDataSource
 import com.truckpark.management.data.remote.HttpUrlConnectionTransport
 import com.truckpark.management.data.remote.auth.AuthRemoteDataSource
 import com.truckpark.management.data.remote.auth.OrdsAuthRemoteDataSource
+import com.truckpark.management.data.remote.email.BrevoSmtpEmailSender
+import com.truckpark.management.data.remote.email.EmailSender
 import com.truckpark.management.data.repositories.AuthRepositoryImpl
 import com.truckpark.management.data.repositories.ThemeRepositoryImpl
 import com.truckpark.management.domain.repositories.AuthRepository
@@ -24,11 +26,20 @@ class AppContainer(context: Context) {
     private val authRemote: AuthRemoteDataSource =
         OrdsAuthRemoteDataSource(AppConfig.apiBaseUrl, HttpUrlConnectionTransport())
 
+    private val emailSender: EmailSender = BrevoSmtpEmailSender(
+        smtpHost = AppConfig.BREVO_SMTP_HOST,
+        smtpPort = AppConfig.BREVO_SMTP_PORT,
+        smtpLogin = AppConfig.BREVO_SMTP_LOGIN,
+        smtpKey = AppConfig.BREVO_SMTP_KEY,
+        senderEmail = AppConfig.BREVO_SENDER_EMAIL,
+    )
+
     val authRepository: AuthRepository = AuthRepositoryImpl(
         remote = authRemote,
         store = KeystoreSessionStore(context),
         devices = PreferencesDeviceIdProvider(context),
         deviceName = "${Build.MANUFACTURER} ${Build.MODEL}".trim().take(100),
+        emailSender = emailSender,
     )
 }
 

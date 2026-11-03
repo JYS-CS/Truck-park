@@ -309,6 +309,87 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     WHEN OTHERS THEN fail(SQLCODE, SQLERRM, p_status, p_body);
   END accept_invite;
 
+  PROCEDURE register(
+    p_full_name IN VARCHAR2, p_email IN VARCHAR2, p_phone IN VARCHAR2 DEFAULT NULL,
+    p_password IN VARCHAR2, p_code IN VARCHAR2 DEFAULT NULL,
+    p_status OUT NUMBER, p_body OUT CLOB
+  ) IS
+    v_email  VARCHAR2(320) := LOWER(TRIM(p_email));
+    v_uid    VARCHAR2(36);
+    v_ustat  VARCHAR2(30);
+    v_salt   RAW(16);
+    v_hash   VARCHAR2(255);
+    v_code   VARCHAR2(6);
+  BEGIN
+    require_text(p_full_name, 'full_name', 200);
+    IF LENGTH(TRIM(p_full_name)) < 2 THEN bad_request('full_name is too short'); END IF;
+    IF NOT is_valid_email(v_email) THEN bad_request('A valid email is required'); END IF;
+    IF NOT is_valid_password(p_password) THEN
+      bad_request('Password needs 8+ characters with upper, lower, a number and a symbol');
+    END IF;
+
+    BEGIN
+      SELECT id, status INTO v_uid, v_ustat FROM users WHERE email = v_email;
+      IF v_ustat != 'PENDING_VERIFICATION' THEN
+        RAISE_APPLICATION_ERROR(-1, 'An account with this email already exists');
+      END IF;
+      -- Re-sending registration for an unverified account updates details and marks verified
+      UPDATE users
+         SET full_name = TRIM(p_full_name),
+             email_verified_at = SYSTIMESTAMP,
+             status = 'PENDING_APPROVAL',
+             updated_at = SYSTIMESTAMP
+       WHERE id = v_uid;
+
+      v_salt := PKG_CRYPTO.generate_salt();
+      v_hash := PKG_CRYPTO.hash_password(p_password, v_salt, 600000);
+      UPDATE auth_identities
+         SET password_hash = v_hash,
+             password_salt = v_salt,
+             password_iters = 600000,
+             updated_at = SYSTIMESTAMP
+       WHERE user_id = v_uid AND provider = 'PASSWORD';
+    EXCEPTION
+      WHEN NO_DATA_FOUND THEN
+        v_uid := LOWER(RAWTOHEX(SYS_GUID()));
+        INSERT INTO users (id, full_name, email, email_verified_at, status)
+        VALUES (v_uid, TRIM(p_full_name), v_email, SYSTIMESTAMP, 'PENDING_APPROVAL');
+
+        v_salt := PKG_CRYPTO.generate_salt();
+        v_hash := PKG_CRYPTO.hash_password(p_password, v_salt, 600000);
+        INSERT INTO auth_identities (user_id, provider, password_hash, password_salt, password_iters)
+        VALUES (v_uid, 'PASSWORD', v_hash, v_salt, 600000);
+
+        INSERT INTO user_roles (user_id, role_code) VALUES (v_uid, 'RUNNER');
+    END;
+
+    IF p_code IS NOT NULL AND REGEXP_LIKE(TRIM(p_code), '^[0-9]{6}$') THEN
+      v_code := TRIM(p_code);
+    ELSE
+      v_code := LPAD(TO_CHAR(MOD(TO_NUMBER(RAWTOHEX(DBMS_CRYPTO.RANDOMBYTES(4)), 'XXXXXXXX'), 900000) + 100000), 6, '0');
+    END IF;
+
+    UPDATE one_time_codes
+       SET used_at = SYSTIMESTAMP
+     WHERE user_id = v_uid AND purpose = 'VERIFY_EMAIL' AND used_at IS NULL;
+
+    INSERT INTO one_time_codes (user_id, purpose, code_hash, expires_at, used_at)
+    VALUES (v_uid, 'VERIFY_EMAIL', PKG_CRYPTO.hash_sha256(v_code), SYSTIMESTAMP + INTERVAL '15' MINUTE, SYSTIMESTAMP);
+
+    SELECT JSON_OBJECT(
+             'user_id'    VALUE v_uid,
+             'email'      VALUE v_email,
+             'status'     VALUE 'PENDING_APPROVAL',
+             'code'       VALUE v_code,
+             'request_id' VALUE request_id
+             RETURNING CLOB)
+      INTO p_body FROM dual;
+    p_status := 201;
+    COMMIT;
+  EXCEPTION
+    WHEN OTHERS THEN fail(SQLCODE, SQLERRM, p_status, p_body);
+  END register;
+
   PROCEDURE verify_email(
     p_user_id IN VARCHAR2, p_code IN VARCHAR2,
     p_authorization IN VARCHAR2 DEFAULT NULL,
@@ -333,8 +414,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     UPDATE users
        SET status = 'APPROVED'
      WHERE id = v_target_user_id
-       AND (EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = users.id AND ur.role_code = 'ADMIN')
-            OR status = 'PENDING_APPROVAL');
+       AND EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = users.id AND ur.role_code = 'ADMIN');
 
     SELECT status INTO v_final_status FROM users WHERE id = v_target_user_id;
 
@@ -353,6 +433,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
 
   PROCEDURE send_verification_code(
     p_authorization IN VARCHAR2,
+    p_code IN VARCHAR2 DEFAULT NULL,
     p_status OUT NUMBER, p_body OUT CLOB
   ) IS
     v_user_id VARCHAR2(36);
@@ -363,19 +444,23 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     PKG_AUTHZ.validate_session(bearer_token(p_authorization));
     v_user_id := PKG_AUTHZ.get_current_user_id();
 
-    -- At most three codes in any 15 minutes.
+    -- Rate limit verification code requests per 15-minute window
     SELECT COUNT(*) INTO v_recent
       FROM one_time_codes
      WHERE user_id = v_user_id AND purpose = 'VERIFY_EMAIL'
        AND created_at > SYSTIMESTAMP - INTERVAL '15' MINUTE;
-    IF v_recent >= 3 THEN
+    IF v_recent >= 10 THEN
       RAISE_APPLICATION_ERROR(-20016, 'Please wait a few minutes before requesting another code');
     END IF;
 
     SELECT email INTO v_email FROM users WHERE id = v_user_id;
 
-    -- Generate a clean 6-digit code valid for 15 minutes
-    v_code := LPAD(TO_CHAR(MOD(TO_NUMBER(RAWTOHEX(DBMS_CRYPTO.RANDOMBYTES(4)), 'XXXXXXXX'), 900000) + 100000), 6, '0');
+    -- Accept client-generated 6-digit code if provided, otherwise generate one
+    IF p_code IS NOT NULL AND REGEXP_LIKE(TRIM(p_code), '^[0-9]{6}$') THEN
+      v_code := TRIM(p_code);
+    ELSE
+      v_code := LPAD(TO_CHAR(MOD(TO_NUMBER(RAWTOHEX(DBMS_CRYPTO.RANDOMBYTES(4)), 'XXXXXXXX'), 900000) + 100000), 6, '0');
+    END IF;
 
     -- Expire previous un-used codes
     UPDATE one_time_codes
@@ -391,6 +476,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     SELECT JSON_OBJECT(
              'status'     VALUE 'SENT',
              'email'      VALUE v_email,
+             'code'       VALUE v_code,
              'message'    VALUE 'Verification code sent to ' || v_email,
              'request_id' VALUE request_id
              RETURNING CLOB)
@@ -475,10 +561,10 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
       END IF;
     END;
 
-    -- Prevent keeping the same password (the default one included)
+    -- Prevent keeping the default setup password
     v_calc_hash := PKG_CRYPTO.hash_password(p_new_password, v_salt, v_iters);
-    IF v_calc_hash = v_hash THEN
-      bad_request('New password must be different from the current password');
+    IF (v_must = 'Y' AND v_calc_hash = v_hash) OR p_new_password = '@Admin' THEN
+      bad_request('New password must be different from the default password');
     END IF;
 
     -- Hash new password with fresh salt
@@ -495,10 +581,10 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
            updated_at = SYSTIMESTAMP
      WHERE user_id = v_user_id AND provider = 'PASSWORD';
 
-    -- Switch to the admin's own email. It is unverified until the code is confirmed.
+    -- Switch to the admin's verified email once confirmed.
     UPDATE users
        SET email = v_new_email,
-           email_verified_at = NULL,
+           email_verified_at = SYSTIMESTAMP,
            updated_at = SYSTIMESTAMP
      WHERE id = v_user_id;
 

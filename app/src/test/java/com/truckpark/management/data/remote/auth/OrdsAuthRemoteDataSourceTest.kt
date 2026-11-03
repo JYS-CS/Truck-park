@@ -117,4 +117,30 @@ class OrdsAuthRemoteDataSourceTest {
 
         assertEquals("https://host/v1/auth/verify-email", transport.requests.single().url)
     }
+
+    @Test
+    fun sendVerificationCode_includesCodeInPayloadWhenProvided() = runBlocking {
+        val transport = FakeTransport { HttpResponse(200, """{"status":"SENT"}""") }
+        source(transport).sendVerificationCode("tok-admin", "654321")
+
+        val request = transport.requests.single()
+        assertEquals("https://host/ords/truckpark/v1/auth/send-verification-code", request.url)
+        assertEquals("Bearer tok-admin", request.headers["Authorization"])
+        assertEquals("654321", JSONObject(request.body!!).getString("code"))
+    }
+
+    @Test
+    fun register_postsSignUpPayloadToRegisterEndpoint() = runBlocking {
+        val transport = FakeTransport { HttpResponse(201, """{"user_id":"u99","status":"PENDING_VERIFICATION"}""") }
+        val res = source(transport).register("Jane Runner", "jane@x.com", "+27123456789", "Pass123!", "112233")
+            as AuthResult.Success
+
+        assertEquals("u99", res.value)
+        val request = transport.requests.single()
+        assertEquals("https://host/ords/truckpark/v1/auth/register", request.url)
+        val body = JSONObject(request.body!!)
+        assertEquals("Jane Runner", body.getString("full_name"))
+        assertEquals("jane@x.com", body.getString("email"))
+        assertEquals("112233", body.getString("code"))
+    }
 }

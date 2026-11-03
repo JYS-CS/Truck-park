@@ -125,23 +125,84 @@ class AuthViewModel(
         }
     }
 
-    fun sendVerificationCode(onComplete: (AuthResult<Unit>) -> Unit) {
+    fun sendVerificationCode(
+        email: String? = null,
+        onComplete: (AuthResult<Unit>) -> Unit,
+    ) {
         viewModelScope.launch {
-            val result = authRepository.sendVerificationCode()
+            val current = _uiState.value
+            val resolvedEmail = email?.trim()?.takeIf { it.isNotEmpty() }
+                ?: (current as? AuthUiState.AdminSecuritySetup)?.user?.email
+            val result = authRepository.sendVerificationCode(resolvedEmail)
             onComplete(result)
         }
     }
 
-    fun verifyEmail(code: String, onComplete: (AuthResult<Unit>) -> Unit) {
+    fun requestSignUpVerification(
+        fullName: String,
+        email: String,
+        phone: String,
+        password: String,
+        onComplete: (AuthResult<Unit>) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val result = authRepository.requestSignUpVerification(fullName, email, phone, password)
+            onComplete(result)
+        }
+    }
+
+    fun resendSignUpVerificationCode(
+        email: String,
+        onComplete: (AuthResult<Unit>) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val result = authRepository.resendSignUpVerificationCode(email)
+            onComplete(result)
+        }
+    }
+
+    fun verifySignUpEmail(
+        email: String,
+        code: String,
+        onComplete: (AuthResult<Unit>) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val result = authRepository.verifySignUpEmail(email, code)
+            onComplete(result)
+        }
+    }
+
+    fun verifyEmail(
+        code: String,
+        newEmail: String? = null,
+        newPassword: String? = null,
+        onComplete: (AuthResult<Unit>) -> Unit,
+    ) {
         viewModelScope.launch {
             val current = _uiState.value
             val userId = if (current is AuthUiState.AdminSecuritySetup) current.user.id else ""
-            val result = authRepository.verifyEmail(userId, code)
+            val result = if (!newEmail.isNullOrBlank() && !newPassword.isNullOrBlank()) {
+                authRepository.verifyAndChangeAdminCredentials(
+                    userId = userId,
+                    newEmail = newEmail,
+                    newPassword = newPassword,
+                    code = code,
+                )
+            } else {
+                authRepository.verifyEmail(userId, code)
+            }
             if (result is AuthResult.Success) {
                 if (current is AuthUiState.AdminSecuritySetup) {
-                    val updatedUser = current.user.copy(emailVerified = true)
+                    val resolvedEmail = newEmail?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
+                        ?: current.user.email
+                    val updatedUser = current.user.copy(
+                        email = resolvedEmail,
+                        emailVerified = true,
+                        mustChangePassword = false,
+                    )
                     _uiState.value = current.copy(
                         user = updatedUser,
+                        passwordChanged = true,
                         emailVerified = true,
                     )
                 }

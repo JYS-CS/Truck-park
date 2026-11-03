@@ -28,6 +28,11 @@ CREATE OR REPLACE PACKAGE PKG_API AS
     p_token IN VARCHAR2, p_full_name IN VARCHAR2, p_password IN VARCHAR2,
     p_status OUT NUMBER, p_body OUT CLOB);
 
+  PROCEDURE register(
+    p_full_name IN VARCHAR2, p_email IN VARCHAR2, p_phone IN VARCHAR2 DEFAULT NULL,
+    p_password IN VARCHAR2, p_code IN VARCHAR2 DEFAULT NULL,
+    p_status OUT NUMBER, p_body OUT CLOB);
+
   PROCEDURE verify_email(
     p_user_id IN VARCHAR2, p_code IN VARCHAR2,
     p_authorization IN VARCHAR2 DEFAULT NULL,
@@ -35,6 +40,7 @@ CREATE OR REPLACE PACKAGE PKG_API AS
 
   PROCEDURE send_verification_code(
     p_authorization IN VARCHAR2,
+    p_code IN VARCHAR2 DEFAULT NULL,
     p_status OUT NUMBER, p_body OUT CLOB);
 
   -- Signed in (p_authorization is the raw "Authorization" header) ----------

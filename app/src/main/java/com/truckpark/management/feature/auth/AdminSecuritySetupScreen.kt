@@ -135,6 +135,28 @@ fun AdminSecuritySetupScreen(
         }
     }
 
+    // Automatically send verification code when landing directly on step 2 from a previous session
+    LaunchedEffect(Unit) {
+        if (initialPasswordChanged && !emailVerified) {
+            val target = if (newEmail.isNotBlank()) newEmail.trim() else user.email
+            if (target.isNotBlank() && !target.equals("admin@hibiscuss.com", ignoreCase = true)) {
+                viewModel.sendVerificationCode(email = target) { codeResult ->
+                    when (codeResult) {
+                        is AuthResult.Success -> {
+                            resendCooldown = 40
+                            emailError = null
+                            emailSuccess = "Verification code sent to ${target.lowercase()}"
+                        }
+                        is AuthResult.Failure -> {
+                            emailSuccess = null
+                            emailError = codeResult.error.message
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // When both password change and email verification are completed, proceed to dashboard
     LaunchedEffect(passwordChanged, emailVerified) {
         if (passwordChanged && emailVerified) {
@@ -302,40 +324,33 @@ fun AdminSecuritySetupScreen(
                                         passwordError = "Enter a valid email address"
                                         return@SetupActionButton
                                     }
+                                    if (newEmail.trim().equals("admin@hibiscuss.com", ignoreCase = true)) {
+                                        passwordError = "Please enter your personal email address"
+                                        return@SetupActionButton
+                                    }
                                     if (!allRulesSatisfied) {
                                         passwordError = "New password must satisfy all 5 requirements"
                                         return@SetupActionButton
                                     }
+                                    if (newPassword == "@Admin") {
+                                        passwordError = "New password must be different from the default password"
+                                        return@SetupActionButton
+                                    }
                                     isChangingPassword = true
                                     passwordError = null
-                                    viewModel.changePassword(
-                                        newEmail = newEmail.trim(),
-                                        newPassword = newPassword,
-                                    ) { result ->
+                                    // Send verification code first; credentials are only saved to DB once the code is verified
+                                    viewModel.sendVerificationCode(email = newEmail.trim()) { codeResult ->
                                         isChangingPassword = false
-                                        when (result) {
+                                        when (codeResult) {
                                             is AuthResult.Success -> {
-                                                passwordChanged = true
                                                 emailVerified = false
                                                 onVerifyPage = true
-                                                passwordSuccess = "Details saved. Next, verify your new email."
-                                                // Send the code straight to the new address, so the next screen is ready.
-                                                viewModel.sendVerificationCode { codeResult ->
-                                                    when (codeResult) {
-                                                        is AuthResult.Success -> {
-                                                            resendCooldown = 40
-                                                            emailError = null
-                                                            emailSuccess = "Verification code sent to ${newEmail.trim().lowercase()}"
-                                                        }
-                                                        is AuthResult.Failure -> {
-                                                            emailSuccess = null
-                                                            emailError = codeResult.error.message
-                                                        }
-                                                    }
-                                                }
+                                                resendCooldown = 40
+                                                emailError = null
+                                                emailSuccess = "Verification code sent to ${newEmail.trim().lowercase()}"
                                             }
                                             is AuthResult.Failure -> {
-                                                passwordError = result.error.message
+                                                passwordError = codeResult.error.message
                                             }
                                         }
                                     }
@@ -372,7 +387,7 @@ fun AdminSecuritySetupScreen(
                             resendCooldownSeconds = resendCooldown,
                             onResend = {
                                 emailError = null
-                                viewModel.sendVerificationCode { codeResult ->
+                                viewModel.sendVerificationCode(email = targetEmail) { codeResult ->
                                     when (codeResult) {
                                         is AuthResult.Success -> {
                                             resendCooldown = 40
@@ -387,13 +402,18 @@ fun AdminSecuritySetupScreen(
                                 }
                             },
                             onVerify = { code, onResult ->
-                                viewModel.verifyEmail(code) { result ->
+                                viewModel.verifyEmail(
+                                    code = code,
+                                    newEmail = targetEmail,
+                                    newPassword = newPassword.takeIf { it.isNotBlank() },
+                                ) { result ->
                                     when (result) {
                                         is AuthResult.Success -> {
                                             onResult(null)
                                             // Let the green success animation play before proceeding to dashboard
                                             scope.launch {
                                                 delay(900)
+                                                passwordChanged = true
                                                 emailVerified = true
                                                 delay(800)
                                                 onSetupComplete()

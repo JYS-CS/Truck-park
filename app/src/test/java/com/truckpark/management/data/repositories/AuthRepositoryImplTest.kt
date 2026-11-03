@@ -5,6 +5,7 @@ import com.truckpark.management.core.common.AuthResult
 import com.truckpark.management.data.local.DeviceIdProvider
 import com.truckpark.management.data.local.SessionStore
 import com.truckpark.management.data.remote.auth.AuthRemoteDataSource
+import com.truckpark.management.data.remote.email.EmailSender
 import com.truckpark.management.domain.models.AuthSession
 import com.truckpark.management.domain.models.AuthUser
 import com.truckpark.management.domain.models.SignInResult
@@ -33,9 +34,35 @@ private val USER = AuthUser(
 )
 
 private class MemoryStore(var session: AuthSession? = null) : SessionStore {
+    val verified = mutableSetOf<String>()
     override fun load() = session
     override fun save(session: AuthSession) { this.session = session }
     override fun clear() { session = null }
+    override fun markEmailVerified(email: String) { verified += email.trim().lowercase() }
+    override fun unmarkEmailVerified(email: String) { verified -= email.trim().lowercase() }
+    override fun isEmailVerified(email: String): Boolean = email.trim().lowercase() in verified
+}
+
+private class FakeEmailSender : EmailSender {
+    data class SentEmail(
+        val toEmail: String,
+        val code: String,
+        val recipientName: String?,
+        val isAdminSetup: Boolean,
+    )
+
+    val sent = mutableListOf<SentEmail>()
+    var nextResult: AuthResult<Unit> = AuthResult.Success(Unit)
+
+    override suspend fun sendVerificationEmail(
+        toEmail: String,
+        code: String,
+        recipientName: String?,
+        isAdminSetup: Boolean,
+    ): AuthResult<Unit> {
+        sent += SentEmail(toEmail, code, recipientName, isAdminSetup)
+        return nextResult
+    }
 }
 
 private class FixedDevice : DeviceIdProvider {
@@ -46,7 +73,10 @@ private class FakeRemote : AuthRemoteDataSource {
     var refreshCalls = 0
     var meCalls = 0
     var signOutCalls = 0
+    var changePasswordCalls = 0
+    var registerCalls = 0
     var lastSignInEmail: String? = null
+    var lastChangedEmail: String? = null
     var refreshResult: AuthResult<AuthSession> = AuthResult.Success(
         AuthSession("s2", "r2", NOW.plusSeconds(3600)),
     )
@@ -83,21 +113,43 @@ private class FakeRemote : AuthRemoteDataSource {
 
     override suspend fun sendVerificationCode(sessionToken: String): AuthResult<Unit> = AuthResult.Success(Unit)
 
+    override suspend fun register(
+        fullName: String,
+        email: String,
+        phone: String,
+        password: String,
+        code: String,
+    ): AuthResult<String> {
+        registerCalls++
+        return AuthResult.Success("u-new")
+    }
+
     override suspend fun changePassword(
         sessionToken: String,
         newEmail: String,
         newPassword: String,
-    ): AuthResult<Unit> =
-        AuthResult.Success(Unit)
+    ): AuthResult<Unit> {
+        changePasswordCalls++
+        lastChangedEmail = newEmail
+        return AuthResult.Success(Unit)
+    }
 }
 
 class AuthRepositoryImplTest {
 
     private val remote = FakeRemote()
     private val store = MemoryStore()
+    private val emailSender = FakeEmailSender()
     private val clock = Clock.fixed(NOW, ZoneOffset.UTC)
 
-    private fun repo() = AuthRepositoryImpl(remote, store, FixedDevice(), "Test phone", clock)
+    private fun repo() = AuthRepositoryImpl(
+        remote = remote,
+        store = store,
+        devices = FixedDevice(),
+        deviceName = "Test phone",
+        clock = clock,
+        emailSender = emailSender,
+    )
 
     private fun signedInStore(expiresIn: Long = 3600, refresh: String = "r1", token: String = "s1") {
         store.session = AuthSession(token, refresh, NOW.plusSeconds(expiresIn))
@@ -200,5 +252,79 @@ class AuthRepositoryImplTest {
     fun signOut_withoutSession_doesNotCallServer() = runBlocking {
         repo().signOut()
         assertEquals(0, remote.signOutCalls)
+    }
+
+    @Test
+    fun adminSendAndVerifyCode_dispatchesEmailAndOnlyUpdatesDbAfterVerification() = runBlocking {
+        signedInStore()
+        val repository = repo()
+
+        val sendRes = repository.sendVerificationCode("admin.new@hibiscuss.com")
+        assertTrue(sendRes is AuthResult.Success)
+        assertEquals(1, emailSender.sent.size)
+        val dispatched = emailSender.sent.single()
+        assertEquals("admin.new@hibiscuss.com", dispatched.toEmail)
+        assertTrue(dispatched.isAdminSetup)
+        assertEquals(6, dispatched.code.length)
+        // DB must not be updated before code is verified
+        assertEquals(0, remote.changePasswordCalls)
+
+        // Wrong code is rejected and DB is still untouched
+        val wrong = repository.verifyAndChangeAdminCredentials(
+            userId = "u1",
+            newEmail = "admin.new@hibiscuss.com",
+            newPassword = "NewPassword1!",
+            code = "000000",
+        )
+        assertTrue(wrong is AuthResult.Failure)
+        assertEquals(0, remote.changePasswordCalls)
+
+        // Exact code sent via email is accepted, updates DB, and marks email verified
+        val right = repository.verifyAndChangeAdminCredentials(
+            userId = "u1",
+            newEmail = "admin.new@hibiscuss.com",
+            newPassword = "NewPassword1!",
+            code = dispatched.code,
+        )
+        assertTrue(right is AuthResult.Success)
+        assertEquals(1, remote.changePasswordCalls)
+        assertEquals("admin.new@hibiscuss.com", remote.lastChangedEmail)
+        assertTrue(store.isEmailVerified("admin.new@hibiscuss.com"))
+    }
+
+    @Test
+    fun signUpFlow_dispatchesEmailAndOnlyRegistersInDbAfterVerification() = runBlocking {
+        val repository = repo()
+
+        val reqRes = repository.requestSignUpVerification(
+            fullName = "John Runner",
+            email = "John.Runner@Example.com",
+            phone = "+27821234567",
+            password = "Password123!",
+        )
+        assertTrue(reqRes is AuthResult.Success)
+        assertEquals(1, emailSender.sent.size)
+        val firstEmail = emailSender.sent.first()
+        assertEquals("john.runner@example.com", firstEmail.toEmail)
+        assertFalse(firstEmail.isAdminSetup)
+        // DB must not be touched before verification
+        assertEquals(0, remote.registerCalls)
+
+        // Resend issues a fresh code without writing to DB
+        val resendRes = repository.resendSignUpVerificationCode("John.Runner@Example.com")
+        assertTrue(resendRes is AuthResult.Success)
+        assertEquals(2, emailSender.sent.size)
+        assertEquals(0, remote.registerCalls)
+        val latestCode = emailSender.sent.last().code
+
+        // Wrong code fails and still does not write to DB
+        val wrongVerify = repository.verifySignUpEmail("john.runner@example.com", "000000")
+        assertTrue(wrongVerify is AuthResult.Failure)
+        assertEquals(0, remote.registerCalls)
+
+        // Correct code succeeds and now persists user to DB
+        val rightVerify = repository.verifySignUpEmail("john.runner@example.com", latestCode)
+        assertTrue(rightVerify is AuthResult.Success)
+        assertEquals(1, remote.registerCalls)
     }
 }

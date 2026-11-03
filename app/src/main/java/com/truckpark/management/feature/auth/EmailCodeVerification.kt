@@ -417,6 +417,23 @@ fun EmailCodeVerification(
                 ),
             )
 
+            if (!notice.isNullOrBlank() && otpState == OtpState.Idle) {
+                val isErrorNotice = notice.contains("fail", ignoreCase = true) ||
+                    notice.contains("unable", ignoreCase = true) ||
+                    notice.contains("error", ignoreCase = true) ||
+                    notice.contains("could not", ignoreCase = true)
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = notice,
+                    style = TextStyle(
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = if (isErrorNotice) palette.error else palette.success,
+                        textAlign = TextAlign.Center,
+                    ),
+                )
+            }
+
             Spacer(modifier = Modifier.height(24.dp))
 
             // Responsive 6 boxes — disabled while a verify request is in-flight

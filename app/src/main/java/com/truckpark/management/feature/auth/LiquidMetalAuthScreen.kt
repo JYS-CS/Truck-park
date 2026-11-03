@@ -92,6 +92,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.truckpark.management.R
+import com.truckpark.management.core.common.AuthResult
 import com.truckpark.management.core.designsystem.components.AppBackground
 import kotlinx.coroutines.launch
 import kotlin.math.sin
@@ -270,6 +271,7 @@ fun LiquidMetalAuthScreen(
 
     var isVerifyingRegistration by remember { mutableStateOf(false) }
     var isRegistrationPendingApproval by remember { mutableStateOf(false) }
+    var isSendingSignUpCode by remember { mutableStateOf(false) }
     var regResendCooldown by remember { mutableIntStateOf(0) }
     var regNoticeMessage by remember { mutableStateOf<String?>(null) }
 
@@ -300,6 +302,7 @@ fun LiquidMetalAuthScreen(
         serverErrorMessage = null
         isVerifyingRegistration = false
         isRegistrationPendingApproval = false
+        isSendingSignUpCode = false
         regNoticeMessage = null
         regResendCooldown = 0
         viewModel.clearError()
@@ -324,6 +327,8 @@ fun LiquidMetalAuthScreen(
     }
 
     fun submitSignUp() {
+        if (isSendingSignUpCode) return
+        serverErrorMessage = null
         val sanitizedName = AuthSecurityUtils.sanitizeText(fullName.trim(), 50)
         val sanitizedEmail = AuthSecurityUtils.sanitizeText(emailOrUser.trim(), 60)
         val sanitizedPhone = AuthSecurityUtils.sanitizePhone(phoneNumber.trim())
@@ -341,9 +346,25 @@ fun LiquidMetalAuthScreen(
 
         if (nError == null && eError == null && phError == null && pError == null) {
             focusManager.clearFocus()
-            isVerifyingRegistration = true
-            regResendCooldown = 40
-            regNoticeMessage = "Verification code sent to $sanitizedEmail"
+            isSendingSignUpCode = true
+            viewModel.requestSignUpVerification(
+                fullName = sanitizedName,
+                email = sanitizedEmail,
+                phone = sanitizedPhone,
+                password = sanitizedPassword,
+            ) { result ->
+                isSendingSignUpCode = false
+                when (result) {
+                    is AuthResult.Success -> {
+                        isVerifyingRegistration = true
+                        regResendCooldown = 40
+                        regNoticeMessage = "Verification code sent to ${sanitizedEmail.lowercase()}"
+                    }
+                    is AuthResult.Failure -> {
+                        serverErrorMessage = result.error.message
+                    }
+                }
+            }
         }
     }
 
@@ -436,16 +457,35 @@ fun LiquidMetalAuthScreen(
                         notice = regNoticeMessage,
                         resendCooldownSeconds = regResendCooldown,
                         onResend = {
-                            regResendCooldown = 40
-                            regNoticeMessage = "New verification code sent to ${emailOrUser.trim()}"
+                            val targetEmail = emailOrUser.trim()
+                            viewModel.resendSignUpVerificationCode(targetEmail) { result ->
+                                when (result) {
+                                    is AuthResult.Success -> {
+                                        regResendCooldown = 40
+                                        regNoticeMessage = "New verification code sent to ${targetEmail.lowercase()}"
+                                    }
+                                    is AuthResult.Failure -> {
+                                        regNoticeMessage = result.error.message
+                                    }
+                                }
+                            }
                         },
                         onVerify = { code, onResult ->
                             if (code.length == 6) {
-                                onResult(null)
-                                coroutineScope.launch {
-                                    delay(900)
-                                    isVerifyingRegistration = false
-                                    isRegistrationPendingApproval = true
+                                viewModel.verifySignUpEmail(emailOrUser.trim(), code) { result ->
+                                    when (result) {
+                                        is AuthResult.Success -> {
+                                            onResult(null)
+                                            coroutineScope.launch {
+                                                delay(900)
+                                                isVerifyingRegistration = false
+                                                isRegistrationPendingApproval = true
+                                            }
+                                        }
+                                        is AuthResult.Failure -> {
+                                            onResult(result.error.message)
+                                        }
+                                    }
                                 }
                             } else {
                                 onResult("Enter a valid 6-digit confirmation code")
@@ -712,11 +752,44 @@ fun LiquidMetalAuthScreen(
                                     dark = dark,
                                 )
 
+                                AnimatedVisibility(
+                                    visible = serverErrorMessage != null,
+                                    enter = fadeIn(),
+                                    exit = fadeOut(),
+                                ) {
+                                    if (serverErrorMessage != null) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(14.dp))
+                                                .background(if (dark) Color(0xFF450A0A).copy(alpha = 0.7f) else Color(0xFFFEE2E2))
+                                                .border(1.dp, if (dark) Color(0xFFDC2626).copy(alpha = 0.6f) else Color(0xFFF87171), RoundedCornerShape(14.dp))
+                                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Warning,
+                                                    contentDescription = null,
+                                                    tint = Color(0xFFEF4444),
+                                                    modifier = Modifier.size(18.dp),
+                                                )
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Text(
+                                                    text = serverErrorMessage ?: "",
+                                                    color = if (dark) Color(0xFFFCA5A5) else Color(0xFFB91C1C),
+                                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                val signUpBusy = isLoading || isSendingSignUpCode
                                 LiquidTriggerButton(
-                                    text = if (isLoading) "Creating account..." else "Create Account",
+                                    text = if (signUpBusy) "Sending code..." else "Create Account",
                                     onClick = { submitSignUp() },
                                     dark = dark,
-                                    isLoading = isLoading,
+                                    isLoading = signUpBusy,
                                     bringIntoViewRequester = null,
                                 )
                             }

@@ -102,6 +102,8 @@ BEGIN
     'PKG_API.refresh(:refresh_token, :device_id, v_s, v_b);');
   add_handler('auth/accept-invite', 'POST',
     'PKG_API.accept_invite(:token, :full_name, :password, v_s, v_b);');
+  add_handler('auth/register', 'POST',
+    'PKG_API.register(:full_name, :email, :phone, :password, :code, v_s, v_b);');
   add_handler('auth/verify-email', 'POST',
     'PKG_API.verify_email(:user_id, :code, :authorization, v_s, v_b);');
 
@@ -111,7 +113,7 @@ BEGIN
   add_handler('auth/change-password', 'POST',
     'PKG_API.change_password(:authorization, :new_email, :new_password, v_s, v_b);');
   add_handler('auth/send-verification-code', 'POST',
-    'PKG_API.send_verification_code(:authorization, v_s, v_b);');
+    'PKG_API.send_verification_code(:authorization, :code, v_s, v_b);');
   add_handler('me', 'GET',
     'PKG_API.me(:authorization, v_s, v_b);');
 

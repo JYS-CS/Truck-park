@@ -18,6 +18,9 @@ interface SessionStore {
     fun load(): AuthSession?
     fun save(session: AuthSession)
     fun clear()
+    fun markEmailVerified(email: String) {}
+    fun unmarkEmailVerified(email: String) {}
+    fun isEmailVerified(email: String): Boolean = false
 }
 
 /**
@@ -68,6 +71,32 @@ class KeystoreSessionStore(context: Context) : SessionStore {
         prefs.edit().remove(KEY_BLOB).commit()
     }
 
+    @Synchronized
+    override fun markEmailVerified(email: String) {
+        val clean = email.trim().lowercase()
+        if (clean.isEmpty()) return
+        val current = prefs.getStringSet(KEY_VERIFIED_EMAILS, emptySet()).orEmpty().toMutableSet()
+        current.add(clean)
+        prefs.edit().putStringSet(KEY_VERIFIED_EMAILS, current).commit()
+    }
+
+    @Synchronized
+    override fun unmarkEmailVerified(email: String) {
+        val clean = email.trim().lowercase()
+        if (clean.isEmpty()) return
+        val current = prefs.getStringSet(KEY_VERIFIED_EMAILS, emptySet()).orEmpty().toMutableSet()
+        if (current.remove(clean)) {
+            prefs.edit().putStringSet(KEY_VERIFIED_EMAILS, current).commit()
+        }
+    }
+
+    @Synchronized
+    override fun isEmailVerified(email: String): Boolean {
+        val clean = email.trim().lowercase()
+        if (clean.isEmpty()) return false
+        return prefs.getStringSet(KEY_VERIFIED_EMAILS, emptySet()).orEmpty().contains(clean)
+    }
+
     private fun secretKey(): SecretKey {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
         (keyStore.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
@@ -88,6 +117,7 @@ class KeystoreSessionStore(context: Context) : SessionStore {
     private companion object {
         const val PREFS = "auth_session_secure"
         const val KEY_BLOB = "blob"
+        const val KEY_VERIFIED_EMAILS = "verified_emails"
         const val KEY_ALIAS = "truckpark_session_key"
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
         const val TRANSFORMATION = "AES/GCM/NoPadding"

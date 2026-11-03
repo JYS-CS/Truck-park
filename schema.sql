@@ -33,6 +33,7 @@ CREATE TABLE users (
   id                 VARCHAR2(36) DEFAULT LOWER(RAWTOHEX(SYS_GUID())) PRIMARY KEY,
   full_name          VARCHAR2(200) NOT NULL,
   email              VARCHAR2(320) NOT NULL UNIQUE,
+  phone              VARCHAR2(40),
   email_verified_at  TIMESTAMP WITH TIME ZONE,
   status             VARCHAR2(30) DEFAULT 'PENDING_VERIFICATION' NOT NULL,
   deactivate_at      TIMESTAMP WITH TIME ZONE,
