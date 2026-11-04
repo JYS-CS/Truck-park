@@ -18,6 +18,8 @@ data class TruckParkColors(
     val glassFill: Color,
     val glassHighlight: Color,
     val glassBorder: Color,
+    val staffAccent: Color,
+    val handsetAccent: Color,
     val success: StatusColors,
     val info: StatusColors,
     val warning: StatusColors,
@@ -66,6 +68,8 @@ val DarkExtendedColors = TruckParkColors(
     glassFill = Color(0xFF0F172A).copy(alpha = 0.65f), // rgba(15, 23, 42, 0.65)
     glassHighlight = Color(0xFF38BDF8).copy(alpha = 0.25f), // Sky 400 light pool
     glassBorder = Color(0xFFFFFFFF).copy(alpha = 0.10f), // borderDark
+    staffAccent = Color(0xFF818CF8), // Indigo 400
+    handsetAccent = Color(0xFF34D399), // Emerald 400
     success = StatusColors(Color(0xFF10B981).copy(alpha = 0.15f), Color(0xFF34D399)), // Emerald / Success
     info = StatusColors(Color(0xFF3B82F6).copy(alpha = 0.15f), Color(0xFF60A5FA)), // Blue / Info
     warning = StatusColors(Color(0xFFF59E0B).copy(alpha = 0.15f), Color(0xFFFBBF24)), // Amber / Warning
@@ -114,6 +118,8 @@ val LightExtendedColors = TruckParkColors(
     glassFill = Color(0xFFFFFFFF).copy(alpha = 0.65f), // rgba(255, 255, 255, 0.65)
     glassHighlight = Color(0xFF38BDF8).copy(alpha = 0.20f),
     glassBorder = Color(0xFFFFFFFF).copy(alpha = 0.50f),
+    staffAccent = Color(0xFF4F46E5), // Indigo 600
+    handsetAccent = Color(0xFF059669), // Emerald 600
     success = StatusColors(Color(0xFFD1FAE5), Color(0xFF047857)), // Emerald 100 / 700
     info = StatusColors(Color(0xFFDBEAFE), Color(0xFF1D4ED8)), // Blue 100 / 700
     warning = StatusColors(Color(0xFFFEF3C7), Color(0xFFB45309)), // Amber 100 / 700

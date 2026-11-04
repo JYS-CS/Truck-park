@@ -34,4 +34,147 @@
     <string name="about_body">Version 0.1.0-m1. Milestone 1 foundation only: navigation and appearance settings. There is no sign-in, no database and no synchronization yet.</string>
 
     <string name="status_label_format">Status: %1$s</string>
+
+    <!-- Personalized Greetings by time of day (15-20 varied lines with {name}) -->
+    <string-array name="greetings_morning">
+        <item>Good morning, {name}. Ready for today’s gate operations?</item>
+        <item>Morning, {name}. The yard is gearing up for a busy day.</item>
+        <item>Rise and shine, {name}. Here is your morning operational overview.</item>
+        <item>Good morning, {name}. Early arrivals are on track.</item>
+        <item>Welcome back, {name}. Let’s start the morning shift strong.</item>
+        <item>A fresh morning, {name}. Your active fleet overview is ready.</item>
+        <item>Good morning, {name}. Gate schedules and handsets are set.</item>
+        <item>Morning check-in, {name}. Hope you have a productive shift today.</item>
+        <item>Hello, {name}. Early morning gate flow is steady.</item>
+        <item>Good day, {name}. Shift handovers and security logs are ready for review.</item>
+        <item>Top of the morning, {name}. Systems and gate lanes are active.</item>
+        <item>Welcome to your morning shift, {name}. Have a smooth operation today.</item>
+        <item>Good morning, {name}. Operational dashboards and handsets are synced.</item>
+        <item>Morning, {name}. Let’s keep yard throughput safe and efficient.</item>
+        <item>Greetings, {name}. All morning gates and monitoring are running.</item>
+        <item>Good morning, {name}. Ready to oversee yard traffic today.</item>
+    </string-array>
+
+    <string-array name="greetings_midday">
+        <item>Good day, {name}. Midday yard traffic is at peak flow.</item>
+        <item>Midday check-in, {name}. How is the yard pacing?</item>
+        <item>Hello {name}, midday turnarounds are running steadily.</item>
+        <item>Afternoon is approaching, {name}. Here is your live overview.</item>
+        <item>Good day, {name}. Gate throughput and dock queues are active.</item>
+        <item>Welcome back, {name}. Checking in on peak midday movements.</item>
+        <item>Hello {name}, monitoring fleet arrivals and turnarounds.</item>
+        <item>Midday status update, {name}. Everything is on schedule.</item>
+        <item>Good day, {name}. Keep an eye on peak bay turnarounds.</item>
+        <item>Hello, {name}. Lunchtime fleet operations are well underway.</item>
+        <item>Midday review, {name}. Active gate runners are in position.</item>
+        <item>Good day, {name}. Peak traffic flow is steady across all bays.</item>
+        <item>Checking in, {name}. Midday dock turnarounds look smooth.</item>
+        <item>Hello {name}, keeping yard velocity high this midday.</item>
+        <item>Good day, {name}. Reviewing live handset telemetry and staff access.</item>
+        <item>Midday status, {name}. Yard bays and dispatch are running smoothly.</item>
+    </string-array>
+
+    <string-array name="greetings_afternoon">
+        <item>Good afternoon, {name}. Wrapping up today’s major shipments?</item>
+        <item>Afternoon, {name}. Outbound gate dispatches are picking up.</item>
+        <item>Hello {name}, late afternoon turnarounds are in full swing.</item>
+        <item>Good afternoon, {name}. Here is your late dispatch progress.</item>
+        <item>Afternoon check-in, {name}. Yard operations remain steady.</item>
+        <item>Welcome back, {name}. Afternoon outbound queues are active.</item>
+        <item>Good afternoon, {name}. Tracking late freight and carrier movements.</item>
+        <item>Afternoon update, {name}. Evening handover preparations are coming up.</item>
+        <item>Hello {name}, keeping dispatches moving smoothly this afternoon.</item>
+        <item>Good afternoon, {name}. Gate turnarounds are well on pace.</item>
+        <item>Afternoon shift review, {name}. Outbound dock traffic is steady.</item>
+        <item>Checking in this afternoon, {name}. Carrier turnarounds are on time.</item>
+        <item>Good afternoon, {name}. Let’s close out today’s planned arrivals strong.</item>
+        <item>Afternoon, {name}. Verifying gate departures and active seal checks.</item>
+        <item>Hello, {name}. Hope your afternoon operations are going smoothly.</item>
+        <item>Good afternoon, {name}. The yard is running on schedule.</item>
+    </string-array>
+
+    <string-array name="greetings_evening">
+        <item>Good evening, {name}. Night shift handovers are underway.</item>
+        <item>Evening, {name}. Yard security and overnight monitoring active.</item>
+        <item>Hello {name}, reviewing evening departures and overnight parking.</item>
+        <item>Good evening, {name}. Settling into the night operations routine.</item>
+        <item>Evening check-in, {name}. Overnight truck arrivals are steady.</item>
+        <item>Welcome back, {name}. Evening yard lanes are clear and secured.</item>
+        <item>Good evening, {name}. Monitoring overnight staging and safe parking.</item>
+        <item>Evening overview, {name}. Gate security check-ins are active.</item>
+        <item>Hello {name}, tracking late arrivals and overnight dock assignments.</item>
+        <item>Good evening, {name}. Handset telemetry and night staff are synced.</item>
+        <item>Evening status, {name}. Overnight bays are operating quietly.</item>
+        <item>Checking in, {name}. Hope your evening shift is safe and calm.</item>
+        <item>Good evening, {name}. All overnight perimeter checks are on schedule.</item>
+        <item>Evening, {name}. Preparing for tomorrow’s scheduled freight dispatches.</item>
+        <item>Hello, {name}. Secure evening operations are in place.</item>
+        <item>Good evening, {name}. Yard perimeter and night gates are protected.</item>
+    </string-array>
+
+    <string-array name="greetings_night">
+        <item>Working late, {name}. Night monitoring is active and alert.</item>
+        <item>Late night check-in, {name}. Keeping the yard secure.</item>
+        <item>Quiet hours, {name}. Overnight gate monitoring in progress.</item>
+        <item>Hello {name}, early dawn operations will resume shortly.</item>
+        <item>Safe watch, {name}. Night shift systems are operating smoothly.</item>
+        <item>Good night, {name}. Overnight truck parking is monitored and safe.</item>
+        <item>Late watch, {name}. Perimeter and bay security checks are steady.</item>
+        <item>Hello {name}, tracking overnight arrivals through the quiet hours.</item>
+        <item>Staying vigilant, {name}. Yard perimeter and access control are secure.</item>
+        <item>Late shift check, {name}. Overnight gate logs are recording accurately.</item>
+        <item>Quiet night, {name}. All staged vehicles and cargo are safe.</item>
+        <item>Hello {name}, keeping the fleet secure through the early morning hours.</item>
+        <item>Working the late hours, {name}. Systems are operational and locked in.</item>
+        <item>Late watch update, {name}. Safe parking status is green across all bays.</item>
+        <item>Night hours, {name}. Handsets and security credentials are functioning.</item>
+        <item>Staying focused, {name}. Night operations are fully under control.</item>
+    </string-array>
+
+    <!-- Admin Panel User-visible Strings -->
+    <string name="admin_panel_title">Access &amp; Handset Governance</string>
+    <string name="admin_panel_subtitle">Centralized administration for staff assignments and authorized handsets.</string>
+    <string name="tile_staff_label">STAFF</string>
+    <string name="tile_handsets_label">HANDSETS</string>
+    <string name="tile_staff_breakdown">%1$d admin · %2$d sup · %3$d run</string>
+    <string name="tile_handsets_breakdown">%1$d active · %2$d revoked</string>
+    <string name="tab_staff_n">Staff (%1$d)</string>
+    <string name="tab_handsets_n">Handsets (%1$d)</string>
+    <string name="search_staff_placeholder">Search staff by name or email…</string>
+    <string name="search_handsets_placeholder">Search handsets by device or owner…</string>
+    <string name="clear_search">Clear search</string>
+    <string name="filter_all">All</string>
+    <string name="filter_runner">Runner</string>
+    <string name="filter_supervisor">Supervisor</string>
+    <string name="filter_admin">Admin</string>
+    <string name="filter_active">Active</string>
+    <string name="filter_revoked">Revoked</string>
+    <string name="btn_got_it">Got it</string>
+    <string name="btn_back_to_staff">Back to staff</string>
+    <string name="lbl_email">Email</string>
+    <string name="lbl_phone">Phone</string>
+    <string name="lbl_role">Role</string>
+    <string name="lbl_handsets">Handsets</string>
+    <string name="not_provided">Not provided</string>
+    <string name="handset_count_format">%1$d (%2$d active)</string>
+    <string name="assigned_handsets_title">Assigned Handsets</string>
+    <string name="no_assigned_handsets">No handsets registered for this staff member.</string>
+    <string name="btn_edit_role">Edit role</string>
+    <string name="role_change_confirm">Change %1$s from %2$s to %3$s?</string>
+    <string name="role_change_self_warn">Warning: Changing your own account role will immediately reduce your administrative access privileges.</string>
+    <string name="btn_cancel">Cancel</string>
+    <string name="btn_confirm">Confirm</string>
+    <string name="saving_role">Updating role…</string>
+    <string name="revoking_device">Revoking handset…</string>
+    <string name="btn_revoke_handset">Revoke Handset</string>
+    <string name="select_revocation_reason">Select revocation reason:</string>
+    <string name="tag_this_handset">THIS HANDSET</string>
+    <string name="revoked_reason_format">Revoked: %1$s</string>
+    <string name="last_active_format">Last active: %1$s</string>
+    <string name="no_staff_found">No staff accounts match your search.</string>
+    <string name="no_handsets_found">No handsets match your search.</string>
+    <string name="reason_lost_stolen">Lost or stolen handset</string>
+    <string name="reason_staff_reassigned">Staff member reassigned</string>
+    <string name="reason_decommissioned">Decommissioned device</string>
+    <string name="reason_policy_violation">Security policy violation</string>
 </resources>
