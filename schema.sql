@@ -60,7 +60,7 @@ CREATE TABLE auth_identities (
   password_must_change VARCHAR2(1) DEFAULT 'N' NOT NULL CHECK (password_must_change IN ('Y','N')),
   created_at      TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP NOT NULL,
   updated_at      TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP NOT NULL,
-  CONSTRAINT uq_auth_provider_ext UNIQUE (provider, external_id)
+  CONSTRAINT uq_auth_user_provider UNIQUE (user_id, provider)
 );
 
 CREATE INDEX idx_auth_ident_user ON auth_identities(user_id);

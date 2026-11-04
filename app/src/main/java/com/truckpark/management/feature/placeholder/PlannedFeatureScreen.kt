@@ -261,7 +261,7 @@ private fun RoleWorkspaceCard(user: AuthUser) {
                     kind = when (role) {
                         "ADMIN" -> StatusKind.Info
                         "SUPERVISOR" -> StatusKind.Warning
-                        else -> StatusKind.Positive
+                        else -> StatusKind.Success
                     },
                     label = role,
                 )
@@ -431,7 +431,7 @@ private fun AdminRoleManagementCard(
                                 kind = when (staff.role) {
                                     "ADMIN" -> StatusKind.Info
                                     "SUPERVISOR" -> StatusKind.Warning
-                                    else -> StatusKind.Positive
+                                    else -> StatusKind.Success
                                 },
                                 label = staff.role,
                             )
@@ -652,7 +652,7 @@ private fun AdminDeviceManagementCard(
                                 )
                             }
                             StatusBadge(
-                                kind = if (device.isRevoked) StatusKind.Negative else StatusKind.Positive,
+                                kind = if (device.isRevoked) StatusKind.Critical else StatusKind.Success,
                                 label = if (device.isRevoked) "REVOKED" else "ACTIVE",
                             )
                         }

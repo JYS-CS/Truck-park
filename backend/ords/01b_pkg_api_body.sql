@@ -23,9 +23,9 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
   -- =========================================================================
   C_SMTP_HOST         CONSTANT VARCHAR2(200) := 'smtp-relay.brevo.com';
   C_SMTP_PORT         CONSTANT PLS_INTEGER   := 587;
-  C_SMTP_LOGIN        CONSTANT VARCHAR2(200) := ''; -- Set your BREVO_SMTP_LOGIN (e.g. 9b8c...@smtp-brevo.com)
-  C_SMTP_KEY          CONSTANT VARCHAR2(200) := ''; -- Set your BREVO_SMTP_KEY (xsmtpsib-... or xkeysib-...)
-  C_SMTP_SENDER_EMAIL CONSTANT VARCHAR2(200) := ''; -- Set your BREVO_SENDER_EMAIL
+  C_SMTP_LOGIN        CONSTANT VARCHAR2(200) := 'YOUR_BREVO_SMTP_LOGIN'; -- Set your BREVO_SMTP_LOGIN (e.g. 9b8c...@smtp-brevo.com)
+  C_SMTP_KEY          CONSTANT VARCHAR2(200) := 'YOUR_BREVO_API_KEY'; -- Set your BREVO_SMTP_KEY (xsmtpsib-... or xkeysib-...)
+  C_SMTP_SENDER_EMAIL CONSTANT VARCHAR2(200) := 'YOUR_BREVO_SENDER_EMAIL'; -- Set your BREVO_SENDER_EMAIL
   C_SMTP_SENDER_NAME  CONSTANT VARCHAR2(200) := 'Hibiscus TruckPark';
   C_ADB_WALLET_PATH   CONSTANT VARCHAR2(200) := 'file:/var/opt/oracle/dbaas_acfs/grid/tcps_wallet';
 
@@ -164,19 +164,93 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
       '-- Hibiscus TruckPark Security' || v_crlf;
 
     v_html_body :=
-      '<!DOCTYPE html><html><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /></head>' ||
-      '<body style="margin:0;padding:24px;background-color:#0B0F19;font-family:-apple-system,BlinkMacSystemFont,''Segoe UI'',Roboto,Helvetica,Arial,sans-serif;color:#F8FAFC;">' ||
-      '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:480px;margin:0 auto;background-color:#111827;border:1px solid #1E293B;border-radius:20px;padding:32px;">' ||
-      '<tr><td align="center">' ||
-      '<div style="font-size:12px;font-weight:700;letter-spacing:2px;color:#38BDF8;text-transform:uppercase;margin-bottom:8px;">HIBISCUS TRUCKPARK</div>' ||
-      '<h1 style="margin:0 0 12px 0;font-size:22px;font-weight:700;color:#FFFFFF;">' || p_heading || '</h1>' ||
-      '<p style="margin:0 0 24px 0;font-size:14px;line-height:22px;color:#94A3B8;">Hello ' || v_greeting_name || ',<br/>' || p_copy || '</p>' ||
-      '<div style="background-color:#0F172A;border:1px solid #334155;border-radius:14px;padding:20px 24px;margin-bottom:24px;">' ||
-      '<div style="font-size:11px;font-weight:600;letter-spacing:1.5px;color:#64748B;text-transform:uppercase;margin-bottom:8px;">' || p_badge_label || '</div>' ||
-      '<div style="font-size:24px;font-weight:800;letter-spacing:4px;color:#38BDF8;font-family:monospace;word-break:break-all;">' || p_badge_value || '</div>' ||
-      '</div>' ||
-      '<p style="margin:0;font-size:12px;line-height:18px;color:#64748B;">' || p_footer_note || '</p>' ||
-      '</td></tr></table></body></html>';
+      q'[<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta http-equiv="X-UA-Compatible" content="IE=edge" />
+<meta name="x-apple-disable-message-reformatting" />
+<meta name="color-scheme" content="light dark" />
+<meta name="supported-color-schemes" content="light dark" />
+<!--[if mso]>
+<noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript>
+<![endif]-->
+<style>
+  :root { color-scheme: light dark; supported-color-schemes: light dark; }
+  body, table, td, a { -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%; }
+  table, td { mso-table-lspace:0pt; mso-table-rspace:0pt; }
+  body { margin:0 !important; padding:0 !important; width:100% !important; background-color:transparent; }
+  @media only screen and (max-width:520px) {
+    .px { padding-left:16px !important; padding-right:16px !important; }
+    .card-px { padding:28px 20px !important; }
+    .h1 { font-size:21px !important; line-height:28px !important; }
+    .code { font-size:24px !important; letter-spacing:3px !important; }
+  }
+  @media (prefers-color-scheme: dark) {
+    .card { background-color:#161E2E !important; border-color:#2B3A55 !important; box-shadow:0 8px 30px rgba(0,0,0,0.45) !important; }
+    .accent { background-color:#38BDF8 !important; }
+    .brand { color:#7DD3FC !important; }
+    .h1 { color:#F8FAFC !important; }
+    .copy { color:#CBD5E1 !important; }
+    .badge { background-color:#052E16 !important; border-color:#166534 !important; }
+    .badge-l { color:#86EFAC !important; }
+    .code { color:#4ADE80 !important; }
+    .hint { color:#94A3B8 !important; }
+    .divider { border-top-color:#2B3A55 !important; }
+    .note { color:#94A3B8 !important; }
+  }
+  [data-ogsc] .h1 { color:#F8FAFC !important; }
+  [data-ogsc] .copy { color:#CBD5E1 !important; }
+  [data-ogsc] .code { color:#4ADE80 !important; }
+  [data-ogsc] .note { color:#94A3B8 !important; }
+  [data-ogsb] .card { background-color:#161E2E !important; }
+  [data-ogsb] .badge { background-color:#052E16 !important; }
+</style>
+</head>
+<body style="margin:0;padding:0;background-color:transparent;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;">]'
+      || p_heading ||
+      q'[&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;</div>
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:transparent;">
+<tr><td align="center" class="px" style="padding:32px 24px;">
+  <!--[if mso]><table role="presentation" width="480" align="center" cellspacing="0" cellpadding="0" border="0"><tr><td><![endif]-->
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="card"
+         style="max-width:480px;width:100%;background-color:#FFFFFF;border:1px solid #CBD5E1;border-radius:20px;box-shadow:0 8px 30px rgba(15,23,42,0.10);">
+    <tr><td class="accent" height="5" style="height:5px;line-height:5px;font-size:0;background-color:#0369A1;border-radius:20px 20px 0 0;">&nbsp;</td></tr>
+    <tr><td align="center" class="card-px" style="padding:36px 32px 40px 32px;">
+      <div class="brand" style="font-size:12px;font-weight:700;letter-spacing:3px;line-height:16px;color:#0369A1;text-transform:uppercase;margin:0 0 12px 0;">HIBISCUS TRUCKPARK</div>
+      <h1 class="h1" style="margin:0 0 14px 0;font-size:24px;line-height:32px;font-weight:700;color:#0F172A;">]'
+      || p_heading ||
+      q'[</h1>
+      <p class="copy" style="margin:0 0 28px 0;font-size:15px;line-height:24px;color:#334155;">Hello ]'
+      || v_greeting_name || q'[,<br/>]' || p_copy ||
+      q'[</p>
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="badge"
+             style="background-color:#F0FDF4;border:1px solid #86EFAC;border-radius:14px;margin:0 0 28px 0;">
+        <tr><td align="center" style="padding:20px 16px 16px 16px;">
+          <div class="badge-l" style="font-size:11px;font-weight:700;letter-spacing:1.5px;line-height:16px;color:#166534;text-transform:uppercase;margin:0 0 8px 0;">]'
+      || p_badge_label ||
+      q'[</div>
+          <div class="code" style="font-size:30px;line-height:38px;font-weight:800;letter-spacing:5px;color:#15803D;font-family:'SF Mono',SFMono-Regular,Menlo,Consolas,'Courier New',monospace;word-break:break-all;">]'
+      || p_badge_value ||
+      q'[</div>
+        </td></tr>
+      </table>
+      <div class="divider" style="border-top:1px solid #CBD5E1;font-size:0;line-height:0;height:1px;margin:0 0 20px 0;">&nbsp;</div>
+      <p class="note" style="margin:0;font-size:12px;line-height:19px;color:#64748B;">]'
+      || p_footer_note ||
+      q'[</p>
+    </td></tr>
+  </table>
+  <!--[if mso]></td></tr></table><![endif]-->
+  <p class="note" style="max-width:480px;margin:20px auto 0 auto;font-size:11px;line-height:16px;color:#64748B;text-align:center;">
+    &copy; Hibiscus Truckpark. All rights reserved.
+  </p>
+</td></tr>
+</table>
+</body>
+</html>]';
 
     BEGIN
       IF LOWER(TRIM(C_SMTP_KEY)) LIKE 'xkeysib-%' THEN
@@ -193,8 +267,19 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
         UTL_HTTP.SET_HEADER(v_req, 'api-key', TRIM(C_SMTP_KEY));
         UTL_HTTP.SET_HEADER(v_req, 'Content-Type', 'application/json; charset=utf-8');
         UTL_HTTP.SET_HEADER(v_req, 'Accept', 'application/json');
-        UTL_HTTP.SET_HEADER(v_req, 'Content-Length', TO_CHAR(LENGTHB(v_json_payload)));
-        UTL_HTTP.WRITE_TEXT(v_req, v_json_payload);
+        UTL_HTTP.SET_HEADER(v_req, 'Content-Length', TO_CHAR(DBMS_LOB.GETLENGTH(v_json_payload)));
+
+        DECLARE
+          v_buf_size   CONSTANT PLS_INTEGER := 4000;
+          v_buf_offset PLS_INTEGER := 1;
+          v_buf_len    PLS_INTEGER := DBMS_LOB.GETLENGTH(v_json_payload);
+        BEGIN
+          WHILE v_buf_offset <= v_buf_len LOOP
+            UTL_HTTP.WRITE_TEXT(v_req, DBMS_LOB.SUBSTR(v_json_payload, v_buf_size, v_buf_offset));
+            v_buf_offset := v_buf_offset + v_buf_size;
+          END LOOP;
+        END;
+
         v_resp := UTL_HTTP.GET_RESPONSE(v_req);
         UTL_HTTP.END_RESPONSE(v_resp);
 
@@ -248,7 +333,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
         IF NOT p_best_effort THEN
           RAISE_APPLICATION_ERROR(
             E_INVALID_REQUEST,
-            'Could not send verification email (' || REGEXP_REPLACE(v_err, '^ORA-[0-9]+: ', '') || ')');
+            'Unable to dispatch verification email at this time. Please try again later.');
         END IF;
     END;
   END dispatch_transactional_email;
@@ -410,12 +495,45 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     RETURN v;
   END user_json;
 
-  -- Turns any raised error into (status, JSON). Only our own -200xx messages are
-  -- shown; anything else becomes INTERNAL_ERROR so SQL text never leaks.
+  -- Autonomous transaction logger to persist security and system exceptions
+  -- without being affected by the caller's ROLLBACK.
+  PROCEDURE log_error(
+    p_code       IN NUMBER,
+    p_message    IN VARCHAR2,
+    p_request_id IN VARCHAR2,
+    p_action     IN VARCHAR2 DEFAULT 'API_ERROR'
+  ) IS
+    PRAGMA AUTONOMOUS_TRANSACTION;
+  BEGIN
+    INSERT INTO audit_events (
+      action,
+      reason,
+      after_json,
+      occurred_at
+    ) VALUES (
+      p_action,
+      SUBSTR(p_message, 1, 500),
+      JSON_OBJECT(
+        'request_id' VALUE p_request_id,
+        'sqlcode'    VALUE p_code,
+        'error'      VALUE SUBSTR(p_message, 1, 1000)
+      ),
+      SYSTIMESTAMP
+    );
+    COMMIT;
+  EXCEPTION
+    WHEN OTHERS THEN
+      ROLLBACK;
+  END log_error;
+
+  -- Turns any raised error into (status, JSON).
+  -- Sensitive stack traces, internal ORA errors, and external provider failures
+  -- are logged to audit_events autonomously, while the client receives a clean generic response.
   PROCEDURE fail(p_code IN PLS_INTEGER, p_msg IN VARCHAR2,
                  p_status OUT NUMBER, p_body OUT CLOB) IS
-    v_name VARCHAR2(40);
-    v_text VARCHAR2(500);
+    v_req_id VARCHAR2(36) := request_id;
+    v_name   VARCHAR2(40);
+    v_text   VARCHAR2(500);
   BEGIN
     CASE p_code
       WHEN -20002 THEN p_status := 401; v_name := 'UNAUTHORIZED';
@@ -432,14 +550,20 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
       ELSE             p_status := 500; v_name := 'INTERNAL_ERROR';
     END CASE;
 
+    -- Log the raw exception and backtrace to the audit trail
+    log_error(p_code, p_msg, v_req_id, 'API_EXCEPTION_' || v_name);
+
+    -- Sanitize client-facing messages:
+    -- Known business exceptions (-20002 to -20016) return clear, safe error messages to users.
+    -- Unhandled internal exceptions or provider errors are sanitized.
     IF p_code BETWEEN -20016 AND -20002 THEN
       v_text := REGEXP_REPLACE(p_msg, '^ORA-[0-9]+: ', '');
     ELSIF p_code = -1 THEN
-      v_text := 'That record already exists';
+      v_text := 'An account or record with these details already exists.';
     ELSIF p_code = -2291 THEN
-      v_text := 'Referenced record was not found';
+      v_text := 'Referenced record was not found.';
     ELSE
-      v_text := 'Something went wrong. Quote the request id when reporting it.';
+      v_text := 'An unexpected error occurred. Quote request ID: ' || v_req_id || ' if contacting support.';
     END IF;
 
     -- Counters and revocations that must survive the failure are kept; everything else is undone.
@@ -450,7 +574,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     END IF;
 
     SELECT JSON_OBJECT('code' VALUE v_name, 'message' VALUE v_text,
-                       'request_id' VALUE request_id RETURNING CLOB)
+                       'request_id' VALUE v_req_id RETURNING CLOB)
       INTO p_body FROM dual;
   END fail;
 

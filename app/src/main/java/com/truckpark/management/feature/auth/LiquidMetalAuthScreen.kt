@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
@@ -45,6 +46,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Email
@@ -52,6 +54,8 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -102,6 +106,40 @@ private data class PasswordRule(
     val title: String,
     val isSatisfied: (String) -> Boolean,
 )
+
+private data class CountryDialCode(
+    val iso: String,
+    val name: String,
+    val dialCode: String,
+    val flag: String,
+)
+
+private val LIGHTWEIGHT_COUNTRY_CODES = listOf(
+    CountryDialCode("ZM", "Zambia", "+260", "🇿🇲"),
+    CountryDialCode("ZA", "South Africa", "+27", "🇿🇦"),
+    CountryDialCode("ZW", "Zimbabwe", "+263", "🇿🇼"),
+    CountryDialCode("CD", "DR Congo", "+243", "🇨🇩"),
+    CountryDialCode("TZ", "Tanzania", "+255", "🇹🇿"),
+    CountryDialCode("MW", "Malawi", "+265", "🇲🇼"),
+    CountryDialCode("BW", "Botswana", "+267", "🇧🇼"),
+    CountryDialCode("NA", "Namibia", "+264", "🇳🇦"),
+    CountryDialCode("MZ", "Mozambique", "+258", "🇲🇿"),
+    CountryDialCode("AO", "Angola", "+244", "🇦🇴"),
+    CountryDialCode("KE", "Kenya", "+254", "🇰🇪"),
+    CountryDialCode("UG", "Uganda", "+256", "🇺🇬"),
+    CountryDialCode("RW", "Rwanda", "+250", "🇷🇼"),
+    CountryDialCode("BI", "Burundi", "+257", "🇧🇮"),
+    CountryDialCode("ET", "Ethiopia", "+251", "🇪🇹"),
+    CountryDialCode("NG", "Nigeria", "+234", "🇳🇬"),
+    CountryDialCode("GH", "Ghana", "+233", "🇬🇭"),
+    CountryDialCode("GB", "United Kingdom", "+44", "🇬🇧"),
+    CountryDialCode("US", "United States", "+1", "🇺🇸"),
+    CountryDialCode("AE", "UAE", "+971", "🇦🇪"),
+    CountryDialCode("IN", "India", "+91", "🇮🇳"),
+    CountryDialCode("CN", "China", "+86", "🇨🇳"),
+)
+
+private val DEFAULT_COUNTRY_CODE = LIGHTWEIGHT_COUNTRY_CODES.first() // Zambia (+260)
 
 private object AuthSecurityUtils {
     private val SQL_INJECTION_KEYWORDS = Regex(
@@ -196,12 +234,29 @@ private object AuthSecurityUtils {
         return null
     }
 
-    fun validatePhone(input: String): String? {
+    fun formatPhoneWithDialCode(localInput: String, dialCode: String): String {
+        val trimmed = localInput.trim()
+        if (trimmed.isEmpty()) return ""
+        val cleanDial = if (dialCode.startsWith("+")) dialCode else "+$dialCode"
+        val dialDigits = cleanDial.filter { it.isDigit() }
+        val rawDigits = trimmed.filter { it.isDigit() }
+        val localDigits = when {
+            trimmed.startsWith(cleanDial) -> rawDigits.removePrefix(dialDigits)
+            rawDigits.startsWith("0") -> rawDigits.drop(1)
+            else -> rawDigits
+        }
+        return "$cleanDial$localDigits"
+    }
+
+    fun validatePhone(input: String, dialCode: String = DEFAULT_COUNTRY_CODE.dialCode): String? {
         val trimmed = input.trim()
         if (trimmed.isEmpty()) return "Phone number is required"
         if (hasDangerousPattern(trimmed)) return "Invalid or unsafe input detected"
-        val digitsOnly = trimmed.filter { it.isDigit() }
-        if (digitsOnly.length < 7 || digitsOnly.length > 15) {
+        val localDigits = trimmed.filter { it.isDigit() }.let {
+            if (it.startsWith("0")) it.drop(1) else it
+        }
+        val fullDigits = formatPhoneWithDialCode(trimmed, dialCode).filter { it.isDigit() }
+        if (localDigits.length < 6 || fullDigits.length !in 7..15) {
             return "Enter a valid phone number (7-15 digits)"
         }
         return null
@@ -264,6 +319,10 @@ fun LiquidMetalAuthScreen(
     var password by rememberSaveable { mutableStateOf("") }
     var fullName by rememberSaveable { mutableStateOf("") }
     var phoneNumber by rememberSaveable { mutableStateOf("") }
+    var selectedCountryIso by rememberSaveable { mutableStateOf(DEFAULT_COUNTRY_CODE.iso) }
+    val selectedCountry = remember(selectedCountryIso) {
+        LIGHTWEIGHT_COUNTRY_CODES.firstOrNull { it.iso == selectedCountryIso } ?: DEFAULT_COUNTRY_CODE
+    }
 
     var emailOrUserError by remember { mutableStateOf<String?>(null) }
     var passwordError by remember { mutableStateOf<String?>(null) }
@@ -397,11 +456,12 @@ fun LiquidMetalAuthScreen(
         val sanitizedName = AuthSecurityUtils.sanitizeText(fullName.trim(), 50)
         val sanitizedEmail = AuthSecurityUtils.sanitizeText(emailOrUser.trim(), 60)
         val sanitizedPhone = AuthSecurityUtils.sanitizePhone(phoneNumber.trim())
+        val formattedPhone = AuthSecurityUtils.formatPhoneWithDialCode(sanitizedPhone, selectedCountry.dialCode)
         val sanitizedPassword = AuthSecurityUtils.sanitizePassword(password)
 
         val nError = AuthSecurityUtils.validateFullName(sanitizedName)
         val eError = AuthSecurityUtils.validateEmail(sanitizedEmail)
-        val phError = AuthSecurityUtils.validatePhone(sanitizedPhone)
+        val phError = AuthSecurityUtils.validatePhone(sanitizedPhone, selectedCountry.dialCode)
         val pError = AuthSecurityUtils.validatePassword(sanitizedPassword, requireComplexity = true)
 
         fullNameError = nError
@@ -415,7 +475,7 @@ fun LiquidMetalAuthScreen(
             viewModel.requestSignUpVerification(
                 fullName = sanitizedName,
                 email = sanitizedEmail,
-                phone = sanitizedPhone,
+                phone = formattedPhone,
                 password = sanitizedPassword,
             ) { result ->
                 isSendingSignUpCode = false
@@ -876,29 +936,6 @@ fun LiquidMetalAuthScreen(
                                     dark = dark,
                                 )
 
-                                Box(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    contentAlignment = Alignment.CenterEnd,
-                                ) {
-                                    Text(
-                                        text = "Forgot password?",
-                                        color = if (dark) Color(0xFF38BDF8) else scheme.primary,
-                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .clickable {
-                                                serverErrorMessage = null
-                                                signInSuccessBanner = null
-                                                emailOrUserError = null
-                                                passwordError = null
-                                                resetNewPassword = ""
-                                                resetNewPasswordError = null
-                                                isResettingPassword = true
-                                            }
-                                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                                    )
-                                }
-
                                 AnimatedVisibility(
                                     visible = signInSuccessBanner != null,
                                     enter = fadeIn(),
@@ -961,6 +998,29 @@ fun LiquidMetalAuthScreen(
                                     isLoading = isLoading,
                                     bringIntoViewRequester = null,
                                 )
+
+                                Box(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(
+                                        text = "Forgot password?",
+                                        color = if (dark) Color(0xFF38BDF8) else scheme.primary,
+                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable {
+                                                serverErrorMessage = null
+                                                signInSuccessBanner = null
+                                                emailOrUserError = null
+                                                passwordError = null
+                                                resetNewPassword = ""
+                                                resetNewPasswordError = null
+                                                isResettingPassword = true
+                                            }
+                                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    )
+                                }
                             } else {
                                 LiquidCapsuleInput(
                                     value = fullName,
@@ -1016,11 +1076,26 @@ fun LiquidMetalAuthScreen(
                                         val sanitized = AuthSecurityUtils.sanitizePhone(input)
                                         phoneNumber = sanitized
                                         if (phoneNumberError != null) {
-                                            phoneNumberError = AuthSecurityUtils.validatePhone(sanitized)
+                                            phoneNumberError = AuthSecurityUtils.validatePhone(sanitized, selectedCountry.dialCode)
                                         }
                                     },
-                                    placeholder = "Phone Number",
+                                    placeholder = "97 123 4567",
                                     icon = Icons.Default.Phone,
+                                    leadingAccessory = {
+                                        LightweightCountryCodeSelector(
+                                            selectedCountry = selectedCountry,
+                                            onCountrySelected = { country ->
+                                                selectedCountryIso = country.iso
+                                                if (phoneNumberError != null) {
+                                                    phoneNumberError = AuthSecurityUtils.validatePhone(
+                                                        phoneNumber,
+                                                        country.dialCode,
+                                                    )
+                                                }
+                                            },
+                                            dark = dark,
+                                        )
+                                    },
                                     errorMessage = phoneNumberError,
                                     keyboardType = KeyboardType.Phone,
                                     imeAction = ImeAction.Next,
@@ -1213,6 +1288,94 @@ private fun ModeSwitchButton(
     }
 }
 
+@Composable
+private fun LightweightCountryCodeSelector(
+    selectedCountry: CountryDialCode,
+    onCountrySelected: (CountryDialCode) -> Unit,
+    dark: Boolean,
+) {
+    val scheme = MaterialTheme.colorScheme
+    var expanded by remember { mutableStateOf(false) }
+
+    Box {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(999.dp))
+                .background(
+                    if (dark) Color.White.copy(alpha = 0.07f)
+                    else scheme.primary.copy(alpha = 0.08f),
+                )
+                .clickable { expanded = true }
+                .padding(start = 8.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "${selectedCountry.flag} ${selectedCountry.dialCode}",
+                style = MaterialTheme.typography.labelLarge.copy(
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp,
+                ),
+                color = scheme.onBackground,
+            )
+            Icon(
+                imageVector = Icons.Default.ArrowDropDown,
+                contentDescription = "Select country code",
+                tint = scheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier
+                .heightIn(max = 260.dp)
+                .background(if (dark) Color(0xFF0F172A) else Color.White),
+        ) {
+            LIGHTWEIGHT_COUNTRY_CODES.forEach { country ->
+                val isSelected = country.iso == selectedCountry.iso
+                DropdownMenuItem(
+                    text = {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "${country.flag}  ${country.name}",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                ),
+                                color = if (isSelected) {
+                                    if (dark) scheme.secondary else scheme.primary
+                                } else {
+                                    scheme.onSurface
+                                },
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text(
+                                text = country.dialCode,
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontWeight = FontWeight.SemiBold,
+                                ),
+                                color = if (isSelected) {
+                                    if (dark) scheme.secondary else scheme.primary
+                                } else {
+                                    scheme.onSurfaceVariant
+                                },
+                            )
+                        }
+                    },
+                    onClick = {
+                        onCountrySelected(country)
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
+}
+
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun LiquidCapsuleInput(
@@ -1220,6 +1383,7 @@ private fun LiquidCapsuleInput(
     onValueChange: (String) -> Unit,
     placeholder: String,
     icon: ImageVector,
+    leadingAccessory: (@Composable () -> Unit)? = null,
     errorMessage: String? = null,
     isPassword: Boolean = false,
     keyboardType: KeyboardType = KeyboardType.Text,
@@ -1323,6 +1487,18 @@ private fun LiquidCapsuleInput(
                 )
 
                 Spacer(modifier = Modifier.width(12.dp))
+
+                if (leadingAccessory != null) {
+                    leadingAccessory()
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .height(22.dp)
+                            .background(scheme.onSurfaceVariant.copy(alpha = 0.25f)),
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                }
 
                 BasicTextField(
                     value = value,
