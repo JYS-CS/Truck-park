@@ -300,6 +300,10 @@ private fun AdminManagementPanel(
     var pendingRoleSelection by remember { mutableStateOf<String?>(null) }
     var isSavingRole by remember { mutableStateOf(false) }
 
+    // User permission exceptions state
+    var userExceptions by remember { mutableStateOf<List<com.truckpark.management.domain.models.UserPermissionException>>(emptyList()) }
+    var isExceptionsLoading by remember { mutableStateOf(false) }
+
     // Handset inline revoke state
     var confirmingDeviceId by remember { mutableStateOf<String?>(null) }
     var revokingDeviceId by remember { mutableStateOf<String?>(null) }
@@ -322,6 +326,17 @@ private fun AdminManagementPanel(
     // Feedback strip: stays until user taps "Got it", no auto-dismiss
     var feedbackMessage by remember { mutableStateOf<String?>(null) }
     var isErrorFeedback by remember { mutableStateOf(false) }
+
+    fun refreshExceptions(userId: String) {
+        isExceptionsLoading = true
+        authViewModel.loadUserExceptions(userId) { result ->
+            isExceptionsLoading = false
+            when (result) {
+                is AuthResult.Success -> userExceptions = result.value
+                is AuthResult.Failure -> userExceptions = emptyList()
+            }
+        }
+    }
 
     fun refreshUsers() {
         isUsersLoading = true
@@ -780,6 +795,44 @@ private fun AdminManagementPanel(
                             }
                         }
                     },
+                    exceptions = userExceptions,
+                    isExceptionsLoading = isExceptionsLoading,
+                    onAddException = { perm, grantOrRemove, reason, hours ->
+                        authViewModel.addUserException(
+                            userId = staff.id,
+                            permissionCode = perm,
+                            grantOrRemove = grantOrRemove,
+                            reason = reason,
+                            expiresInHours = hours,
+                        ) { res ->
+                            when (res) {
+                                is AuthResult.Success -> {
+                                    isErrorFeedback = false
+                                    feedbackMessage = "Permission override added for " + staff.fullName
+                                    refreshExceptions(staff.id)
+                                }
+                                is AuthResult.Failure -> {
+                                    isErrorFeedback = true
+                                    feedbackMessage = res.error.message
+                                }
+                            }
+                        }
+                    },
+                    onRevokeException = { excId ->
+                        authViewModel.revokeUserException(excId, staff.id) { res ->
+                            when (res) {
+                                is AuthResult.Success -> {
+                                    isErrorFeedback = false
+                                    feedbackMessage = "Permission override revoked"
+                                    refreshExceptions(staff.id)
+                                }
+                                is AuthResult.Failure -> {
+                                    isErrorFeedback = true
+                                    feedbackMessage = res.error.message
+                                }
+                            }
+                        }
+                    },
                     staffAccent = staffAccent,
                     dark = dark,
                 )
@@ -833,6 +886,7 @@ private fun AdminManagementPanel(
                                     selectedStaffDetail = staff
                                     isEditingRole = false
                                     pendingRoleSelection = null
+                                    refreshExceptions(staff.id)
                                 },
                             )
                             if (index < filteredUsers.lastIndex) {
@@ -1053,11 +1107,15 @@ private fun StaffDetailView(
     isEditingRole: Boolean,
     pendingRole: String?,
     isSaving: Boolean,
+    exceptions: List<com.truckpark.management.domain.models.UserPermissionException>,
+    isExceptionsLoading: Boolean,
     onBack: () -> Unit,
     onStartEditRole: () -> Unit,
     onSelectPendingRole: (String) -> Unit,
     onCancelRoleEdit: () -> Unit,
     onConfirmRoleEdit: () -> Unit,
+    onAddException: (permissionCode: String, grantOrRemove: String, reason: String, hours: Int?) -> Unit,
+    onRevokeException: (exceptionId: String) -> Unit,
     staffAccent: Color,
     dark: Boolean,
 ) {
@@ -1426,6 +1484,341 @@ private fun StaffDetailView(
                                 color = scheme.onSurfaceVariant,
                             )
                         }
+                    }
+                }
+            }
+        }
+
+        // Granular Permission Exceptions & Overrides
+        PermissionExceptionsSection(
+            staff = staff,
+            exceptions = exceptions,
+            isLoading = isExceptionsLoading,
+            onAddException = onAddException,
+            onRevokeException = onRevokeException,
+            staffAccent = staffAccent,
+            dark = dark,
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PermissionExceptionsSection(
+    staff: ManagedUser,
+    exceptions: List<com.truckpark.management.domain.models.UserPermissionException>,
+    isLoading: Boolean,
+    onAddException: (permissionCode: String, grantOrRemove: String, reason: String, hours: Int?) -> Unit,
+    onRevokeException: (exceptionId: String) -> Unit,
+    staffAccent: Color,
+    dark: Boolean,
+) {
+    val scheme = MaterialTheme.colorScheme
+    var isAdding by remember { mutableStateOf(false) }
+
+    val commonPermissions = listOf(
+        "visit.arrive",
+        "visit.depart",
+        "visit.correct_critical",
+        "visit.override_open",
+        "sync.push",
+        "sync.pull",
+        "audit.view",
+        "device.manage",
+    )
+
+    var selectedPerm by remember { mutableStateOf(commonPermissions.first()) }
+    var selectedAction by remember { mutableStateOf("GRANT") }
+    var inputReason by remember { mutableStateOf("") }
+    var inputHours by remember { mutableStateOf("") }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.exceptions_title),
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        color = scheme.onSurface,
+                    ),
+                )
+                Text(
+                    text = stringResource(R.string.exceptions_subtitle),
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                    color = scheme.onSurfaceVariant,
+                )
+            }
+
+            if (!isAdding) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(staffAccent.copy(alpha = 0.12f))
+                        .border(1.dp, staffAccent.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                        .clickable { isAdding = true }
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                ) {
+                    Text(
+                        text = stringResource(R.string.btn_add_exception),
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = staffAccent,
+                        ),
+                    )
+                }
+            }
+        }
+
+        // Add Exception Form
+        if (isAdding) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(scheme.surface.copy(alpha = if (dark) 0.6f else 0.85f))
+                    .border(1.dp, scheme.outlineVariant.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.lbl_override_type),
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    color = scheme.onSurface,
+                )
+
+                // Action selector: GRANT vs REMOVE
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    listOf("GRANT", "REMOVE").forEach { act ->
+                        val isSelected = selectedAction == act
+                        val actColor = if (act == "GRANT") TruckParkExtras.colors.success.content else scheme.error
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isSelected) actColor.copy(alpha = 0.18f) else scheme.surfaceVariant.copy(alpha = 0.4f))
+                                .border(1.dp, if (isSelected) actColor else scheme.outlineVariant.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                                .clickable { selectedAction = act }
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = if (act == "GRANT") stringResource(R.string.override_grant) else stringResource(R.string.override_remove),
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                    fontSize = 11.sp,
+                                ),
+                                color = if (isSelected) actColor else scheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+
+                // Common permissions chip picker
+                Text(
+                    text = stringResource(R.string.lbl_permission_code),
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    color = scheme.onSurface,
+                )
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    commonPermissions.forEach { perm ->
+                        val isSelected = selectedPerm == perm
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (isSelected) staffAccent else scheme.surfaceVariant.copy(alpha = 0.5f))
+                                .border(1.dp, if (isSelected) staffAccent else scheme.outlineVariant.copy(alpha = 0.3f), RoundedCornerShape(6.dp))
+                                .clickable { selectedPerm = perm }
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                        ) {
+                            Text(
+                                text = perm,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 10.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                ),
+                                color = if (isSelected) Color.White else scheme.onSurface,
+                            )
+                        }
+                    }
+                }
+
+                // Business reason text field
+                Text(
+                    text = stringResource(R.string.lbl_override_reason),
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    color = scheme.onSurface,
+                )
+                BasicTextField(
+                    value = inputReason,
+                    onValueChange = { inputReason = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(scheme.surfaceVariant.copy(alpha = if (dark) 0.35f else 0.5f))
+                        .border(1.dp, scheme.outlineVariant.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    textStyle = MaterialTheme.typography.bodySmall.copy(color = scheme.onSurface),
+                    cursorBrush = SolidColor(staffAccent),
+                    singleLine = true,
+                )
+
+                // Optional duration in hours
+                Text(
+                    text = stringResource(R.string.lbl_expires_hours),
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    color = scheme.onSurface,
+                )
+                BasicTextField(
+                    value = inputHours,
+                    onValueChange = { if (it.all { ch -> ch.isDigit() }) inputHours = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(scheme.surfaceVariant.copy(alpha = if (dark) 0.35f else 0.5f))
+                        .border(1.dp, scheme.outlineVariant.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    textStyle = MaterialTheme.typography.bodySmall.copy(color = scheme.onSurface),
+                    cursorBrush = SolidColor(staffAccent),
+                    singleLine = true,
+                )
+
+                // Actions: Cancel / Save
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { isAdding = false }
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.btn_cancel),
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                            color = scheme.onSurfaceVariant,
+                        )
+                    }
+
+                    Spacer(Modifier.width(8.dp))
+
+                    val canSave = inputReason.isNotBlank() && selectedPerm.isNotBlank()
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (canSave) staffAccent else scheme.outlineVariant.copy(alpha = 0.4f))
+                            .clickable(enabled = canSave) {
+                                val hrs = inputHours.toIntOrNull()
+                                onAddException(selectedPerm, selectedAction, inputReason.trim(), hrs)
+                                isAdding = false
+                                inputReason = ""
+                                inputHours = ""
+                            }
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.btn_save_override),
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            color = Color.White,
+                        )
+                    }
+                }
+            }
+        }
+
+        // Active Exceptions List
+        if (isLoading) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 12.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+            }
+        } else if (exceptions.isEmpty()) {
+            Text(
+                text = stringResource(R.string.no_exceptions),
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
+            )
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(scheme.surfaceVariant.copy(alpha = if (dark) 0.25f else 0.35f))
+                    .border(1.dp, scheme.outlineVariant.copy(alpha = 0.25f), RoundedCornerShape(10.dp)),
+            ) {
+                exceptions.forEachIndexed { idx, exc ->
+                    val isGrant = exc.isGrant
+                    val badgeKind = if (isGrant) StatusKind.Success else StatusKind.Critical
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                StatusBadge(kind = badgeKind, label = exc.grantOrRemove)
+                                Text(
+                                    text = exc.permissionCode,
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                                    color = scheme.onSurface,
+                                )
+                            }
+                            if (exc.reason.isNotBlank()) {
+                                Text(
+                                    text = exc.reason,
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                    color = scheme.onSurfaceVariant,
+                                )
+                            }
+                            if (!exc.expiresAt.isNullOrBlank()) {
+                                Text(
+                                    text = "Expires: " + exc.expiresAt,
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                    color = scheme.error,
+                                )
+                            }
+                        }
+
+                        // Revoke button
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(scheme.error.copy(alpha = 0.12f))
+                                .border(1.dp, scheme.error.copy(alpha = 0.3f), RoundedCornerShape(6.dp))
+                                .clickable { onRevokeException(exc.id) }
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                        ) {
+                            Text(
+                                text = stringResource(R.string.btn_revoke_override),
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = scheme.error,
+                                    fontSize = 10.sp,
+                                ),
+                            )
+                        }
+                    }
+                    if (idx < exceptions.lastIndex) {
+                        HorizontalDivider(color = scheme.outlineVariant.copy(alpha = 0.2f))
                     }
                 }
             }

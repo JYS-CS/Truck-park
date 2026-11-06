@@ -569,6 +569,8 @@ CREATE OR REPLACE PACKAGE BODY PKG_AUTH AS
     v_deact_at   TIMESTAMP WITH TIME ZONE;
     v_sess_raw   VARCHAR2(64);
     v_ref_raw    VARCHAR2(64);
+    v_active_devs NUMBER;
+    C_MAX_DEVICES CONSTANT NUMBER := 2;
   BEGIN
     BEGIN
       SELECT u.id, u.status, u.deactivate_at, ai.password_hash, ai.password_salt, ai.password_iters,
@@ -625,6 +627,17 @@ CREATE OR REPLACE PACKAGE BODY PKG_AUTH AS
     UPDATE auth_identities
        SET failed_attempts = 0, locked_until = NULL
      WHERE user_id = p_user_id AND provider = 'PASSWORD';
+
+    -- Device limit check: max 2 active (unrevoked) handsets per user
+    SELECT COUNT(*) INTO v_active_devs
+      FROM devices
+     WHERE user_id = p_user_id
+       AND revoked_at IS NULL
+       AND id != p_device_id;
+
+    IF v_active_devs >= C_MAX_DEVICES THEN
+      RAISE_APPLICATION_ERROR(-20016, 'Handset limit reached: maximum 2 active devices allowed. Please revoke an existing device to sign in.');
+    END IF;
 
     -- Register or update device
     MERGE INTO devices d
@@ -769,6 +782,15 @@ CREATE OR REPLACE PACKAGE PKG_ADMIN AS
   PROCEDURE reject_user(p_user_id IN VARCHAR2, p_reason IN VARCHAR2);
   PROCEDURE deactivate_user(p_user_id IN VARCHAR2, p_deactivate_at IN TIMESTAMP WITH TIME ZONE DEFAULT NULL);
   PROCEDURE revoke_device(p_device_id IN VARCHAR2, p_reason IN VARCHAR2);
+  PROCEDURE add_permission_exception(
+    p_user_id         IN VARCHAR2,
+    p_permission_code IN VARCHAR2,
+    p_grant_or_remove IN VARCHAR2,
+    p_reason          IN VARCHAR2,
+    p_expires_in_hours IN NUMBER DEFAULT NULL,
+    p_exception_id    OUT VARCHAR2
+  );
+  PROCEDURE revoke_permission_exception(p_exception_id IN VARCHAR2);
 END PKG_ADMIN;
 /
 
@@ -865,6 +887,81 @@ CREATE OR REPLACE PACKAGE BODY PKG_ADMIN AS
     INSERT INTO audit_events (actor_user_id, action, target_type, target_id, reason)
     VALUES (v_admin_id, 'DEVICE_REVOKED', 'DEVICE', p_device_id, p_reason);
   END revoke_device;
+
+  PROCEDURE add_permission_exception(
+    p_user_id         IN VARCHAR2,
+    p_permission_code IN VARCHAR2,
+    p_grant_or_remove IN VARCHAR2,
+    p_reason          IN VARCHAR2,
+    p_expires_in_hours IN NUMBER DEFAULT NULL,
+    p_exception_id    OUT VARCHAR2
+  ) IS
+    v_admin_id VARCHAR2(36) := PKG_AUTHZ.get_current_user_id();
+    v_exp      TIMESTAMP WITH TIME ZONE;
+    v_id       VARCHAR2(36);
+  BEGIN
+    PKG_AUTHZ.require_permission('user.approve');
+
+    IF UPPER(TRIM(p_grant_or_remove)) NOT IN ('GRANT', 'REMOVE') THEN
+      RAISE_APPLICATION_ERROR(-20017, 'grant_or_remove must be GRANT or REMOVE');
+    END IF;
+
+    IF p_expires_in_hours IS NOT NULL AND p_expires_in_hours > 0 THEN
+      v_exp := SYSTIMESTAMP + NUMTODSINTERVAL(p_expires_in_hours, 'HOUR');
+    ELSE
+      v_exp := NULL;
+    END IF;
+
+    v_id := LOWER(RAWTOHEX(SYS_GUID()));
+
+    -- Remove any active prior identical exception for this user and permission
+    DELETE FROM user_permission_exceptions
+     WHERE user_id = p_user_id
+       AND permission_code = TRIM(p_permission_code);
+
+    INSERT INTO user_permission_exceptions (
+      id, user_id, permission_code, grant_or_remove, reason, approved_by, approved_at, expires_at
+    ) VALUES (
+      v_id, p_user_id, TRIM(p_permission_code), UPPER(TRIM(p_grant_or_remove)),
+      TRIM(p_reason), v_admin_id, SYSTIMESTAMP, v_exp
+    );
+
+    UPDATE users
+       SET permission_version = permission_version + 1, updated_at = SYSTIMESTAMP
+     WHERE id = p_user_id;
+
+    INSERT INTO audit_events (actor_user_id, action, target_type, target_id, reason)
+    VALUES (v_admin_id, 'PERMISSION_EXCEPTION_' || UPPER(TRIM(p_grant_or_remove)), 'USER', p_user_id,
+            p_permission_code || ' - ' || TRIM(p_reason));
+
+    p_exception_id := v_id;
+  END add_permission_exception;
+
+  PROCEDURE revoke_permission_exception(p_exception_id IN VARCHAR2) IS
+    v_admin_id VARCHAR2(36) := PKG_AUTHZ.get_current_user_id();
+    v_user_id  VARCHAR2(36);
+    v_perm     VARCHAR2(60);
+  BEGIN
+    PKG_AUTHZ.require_permission('user.approve');
+
+    BEGIN
+      SELECT user_id, permission_code INTO v_user_id, v_perm
+        FROM user_permission_exceptions
+       WHERE id = p_exception_id;
+    EXCEPTION
+      WHEN NO_DATA_FOUND THEN
+        RAISE_APPLICATION_ERROR(-2291, 'Permission exception not found');
+    END;
+
+    DELETE FROM user_permission_exceptions WHERE id = p_exception_id;
+
+    UPDATE users
+       SET permission_version = permission_version + 1, updated_at = SYSTIMESTAMP
+     WHERE id = v_user_id;
+
+    INSERT INTO audit_events (actor_user_id, action, target_type, target_id, reason)
+    VALUES (v_admin_id, 'PERMISSION_EXCEPTION_REVOKED', 'USER', v_user_id, v_perm);
+  END revoke_permission_exception;
 END PKG_ADMIN;
 /
 

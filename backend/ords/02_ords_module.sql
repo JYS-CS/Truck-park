@@ -182,6 +182,12 @@ BEGIN
     'PKG_API.list_devices(:authorization, v_s, v_b);');
   add_handler('admin/devices/:id/revoke', 'POST',
     'PKG_API.revoke_device(:authorization, :id, :reason, v_s, v_b);');
+  add_handler('admin/users/:id/permissions/exceptions', 'GET',
+    'PKG_API.list_user_exceptions(:authorization, :id, v_s, v_b);');
+  add_handler('admin/users/:id/permissions/exceptions', 'POST',
+    'PKG_API.add_user_exception(:authorization, :id, :permission_code, :grant_or_remove, :reason, :expires_in_hours, v_s, v_b);');
+  add_handler('admin/permissions/exceptions/:id/revoke', 'POST',
+    'PKG_API.revoke_user_exception(:authorization, :id, v_s, v_b);');
 
   COMMIT;
 END;

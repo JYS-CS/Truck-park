@@ -63,4 +63,21 @@ interface AuthRemoteDataSource {
         deviceId: String,
         reason: String,
     ): AuthResult<Unit> = AuthResult.Success(Unit)
+    suspend fun listUserExceptions(
+        sessionToken: String,
+        userId: String,
+    ): AuthResult<List<com.truckpark.management.domain.models.UserPermissionException>> =
+        AuthResult.Success(emptyList())
+    suspend fun addUserException(
+        sessionToken: String,
+        userId: String,
+        permissionCode: String,
+        grantOrRemove: String,
+        reason: String,
+        expiresInHours: Int? = null,
+    ): AuthResult<Unit> = AuthResult.Success(Unit)
+    suspend fun revokeUserException(
+        sessionToken: String,
+        exceptionId: String,
+    ): AuthResult<Unit> = AuthResult.Success(Unit)
 }

@@ -47,6 +47,21 @@ data class ManagedUser(
     val role: String,
 )
 
+/** Granular permission override for an individual staff member. */
+data class UserPermissionException(
+    val id: String,
+    val userId: String,
+    val permissionCode: String,
+    val grantOrRemove: String, // "GRANT" or "REMOVE"
+    val reason: String,
+    val approvedBy: String? = null,
+    val approvedAt: String? = null,
+    val expiresAt: String? = null,
+) {
+    val isGrant: Boolean get() = grantOrRemove.equals("GRANT", ignoreCase = true)
+    val isRemove: Boolean get() = grantOrRemove.equals("REMOVE", ignoreCase = true)
+}
+
 /** Registered handset entry returned by the admin device management endpoint. */
 data class ManagedDevice(
     val id: String,

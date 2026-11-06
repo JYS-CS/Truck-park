@@ -14,8 +14,9 @@
 
 CREATE OR REPLACE PACKAGE BODY PKG_API AS
 
-  E_INVALID_REQUEST CONSTANT PLS_INTEGER := -20016;
-  ISO_FMT           CONSTANT VARCHAR2(40) := 'YYYY-MM-DD"T"HH24:MI:SS"Z"';
+  E_DEVICE_LIMIT_EXCEEDED CONSTANT PLS_INTEGER := -20016;
+  E_INVALID_REQUEST       CONSTANT PLS_INTEGER := -20017;
+  ISO_FMT                 CONSTANT VARCHAR2(40) := 'YYYY-MM-DD"T"HH24:MI:SS"Z"';
 
   -- =========================================================================
   -- BREVO TRANSACTIONAL EMAIL CONFIGURATION (Server-Side Email Dispatch)
@@ -544,7 +545,8 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
       WHEN -20013 THEN p_status := 400; v_name := 'INVALID_CODE';
       WHEN -20014 THEN p_status := 401; v_name := 'INVALID_REFRESH_TOKEN';
       WHEN -20015 THEN p_status := 401; v_name := 'DEVICE_REVOKED';
-      WHEN -20016 THEN p_status := 400; v_name := 'INVALID_REQUEST';
+      WHEN -20016 THEN p_status := 409; v_name := 'DEVICE_LIMIT_EXCEEDED';
+      WHEN -20017 THEN p_status := 400; v_name := 'INVALID_REQUEST';
       WHEN -1     THEN p_status := 409; v_name := 'ALREADY_EXISTS';
       WHEN -2291  THEN p_status := 404; v_name := 'NOT_FOUND';
       ELSE             p_status := 500; v_name := 'INTERNAL_ERROR';
@@ -554,9 +556,9 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     log_error(p_code, p_msg, v_req_id, 'API_EXCEPTION_' || v_name);
 
     -- Sanitize client-facing messages:
-    -- Known business exceptions (-20002 to -20016) return clear, safe error messages to users.
+    -- Known business exceptions (-20002 to -20017) return clear, safe error messages to users.
     -- Unhandled internal exceptions or provider errors are sanitized.
-    IF p_code BETWEEN -20016 AND -20002 THEN
+    IF p_code BETWEEN -20017 AND -20002 THEN
       v_text := REGEXP_REPLACE(p_msg, '^ORA-[0-9]+: ', '');
     ELSIF p_code = -1 THEN
       v_text := 'An account or record with these details already exists.';
@@ -1815,6 +1817,97 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
   EXCEPTION
     WHEN OTHERS THEN fail(SQLCODE, SQLERRM, p_status, p_body);
   END revoke_device;
+
+  PROCEDURE list_user_exceptions(
+    p_authorization IN VARCHAR2, p_user_id IN VARCHAR2,
+    p_status OUT NUMBER, p_body OUT CLOB
+  ) IS
+    v_rows CLOB;
+  BEGIN
+    PKG_AUTHZ.validate_session(bearer_token(p_authorization));
+    PKG_AUTHZ.require_permission('user.approve');
+
+    require_text(p_user_id, 'user id', 36);
+
+    SELECT NVL(JSON_ARRAYAGG(
+             JSON_OBJECT(
+               'id'              VALUE e.id,
+               'user_id'         VALUE e.user_id,
+               'permission_code' VALUE e.permission_code,
+               'grant_or_remove' VALUE e.grant_or_remove,
+               'reason'          VALUE e.reason,
+               'approved_by'     VALUE e.approved_by,
+               'approved_at'     VALUE iso(e.approved_at),
+               'expires_at'      VALUE iso(e.expires_at)
+             ) ORDER BY e.approved_at DESC RETURNING CLOB), TO_CLOB('[]'))
+      INTO v_rows
+      FROM user_permission_exceptions e
+     WHERE e.user_id = p_user_id;
+
+    SELECT JSON_OBJECT(
+             'exceptions' VALUE v_rows FORMAT JSON,
+             'request_id' VALUE request_id
+             RETURNING CLOB)
+      INTO p_body FROM dual;
+    p_status := 200;
+  EXCEPTION
+    WHEN OTHERS THEN fail(SQLCODE, SQLERRM, p_status, p_body);
+  END list_user_exceptions;
+
+  PROCEDURE add_user_exception(
+    p_authorization IN VARCHAR2, p_user_id IN VARCHAR2,
+    p_permission_code IN VARCHAR2, p_grant_or_remove IN VARCHAR2,
+    p_reason IN VARCHAR2, p_expires_in_hours IN NUMBER,
+    p_status OUT NUMBER, p_body OUT CLOB
+  ) IS
+    v_exc_id VARCHAR2(36);
+  BEGIN
+    PKG_AUTHZ.validate_session(bearer_token(p_authorization));
+    PKG_AUTHZ.require_permission('user.approve');
+
+    require_text(p_user_id, 'user id', 36);
+    require_text(p_permission_code, 'permission code', 60);
+    require_text(p_grant_or_remove, 'grant_or_remove', 6);
+    require_text(p_reason, 'reason', 500);
+
+    PKG_ADMIN.add_permission_exception(
+      p_user_id          => p_user_id,
+      p_permission_code  => p_permission_code,
+      p_grant_or_remove  => p_grant_or_remove,
+      p_reason           => p_reason,
+      p_expires_in_hours => p_expires_in_hours,
+      p_exception_id     => v_exc_id
+    );
+
+    SELECT JSON_OBJECT(
+             'exception_id' VALUE v_exc_id,
+             'request_id'   VALUE request_id
+             RETURNING CLOB)
+      INTO p_body FROM dual;
+    p_status := 200;
+    COMMIT;
+  EXCEPTION
+    WHEN OTHERS THEN fail(SQLCODE, SQLERRM, p_status, p_body);
+  END add_user_exception;
+
+  PROCEDURE revoke_user_exception(
+    p_authorization IN VARCHAR2, p_exception_id IN VARCHAR2,
+    p_status OUT NUMBER, p_body OUT CLOB
+  ) IS
+  BEGIN
+    PKG_AUTHZ.validate_session(bearer_token(p_authorization));
+    PKG_AUTHZ.require_permission('user.approve');
+
+    require_text(p_exception_id, 'exception id', 36);
+
+    PKG_ADMIN.revoke_permission_exception(p_exception_id);
+
+    p_body := ok_body;
+    p_status := 200;
+    COMMIT;
+  EXCEPTION
+    WHEN OTHERS THEN fail(SQLCODE, SQLERRM, p_status, p_body);
+  END revoke_user_exception;
 
 END PKG_API;
 /

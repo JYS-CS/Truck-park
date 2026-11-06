@@ -236,6 +236,55 @@ class AuthViewModel(
         }
     }
 
+    fun loadUserExceptions(
+        userId: String,
+        onComplete: (AuthResult<List<com.truckpark.management.domain.models.UserPermissionException>>) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val result = authRepository.listUserExceptions(userId)
+            onComplete(result)
+        }
+    }
+
+    fun addUserException(
+        userId: String,
+        permissionCode: String,
+        grantOrRemove: String,
+        reason: String,
+        expiresInHours: Int? = null,
+        onComplete: (AuthResult<Unit>) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val result = authRepository.addUserException(
+                userId = userId,
+                permissionCode = permissionCode,
+                grantOrRemove = grantOrRemove,
+                reason = reason,
+                expiresInHours = expiresInHours,
+            )
+            val current = _uiState.value
+            if (result is AuthResult.Success && current is AuthUiState.Authenticated && current.user.id == userId) {
+                checkCurrentSession()
+            }
+            onComplete(result)
+        }
+    }
+
+    fun revokeUserException(
+        exceptionId: String,
+        userId: String? = null,
+        onComplete: (AuthResult<Unit>) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val result = authRepository.revokeUserException(exceptionId)
+            val current = _uiState.value
+            if (result is AuthResult.Success && current is AuthUiState.Authenticated && current.user.id == userId) {
+                checkCurrentSession()
+            }
+            onComplete(result)
+        }
+    }
+
     fun verifyEmail(
         code: String,
         newEmail: String? = null,

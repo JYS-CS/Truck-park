@@ -38,5 +38,14 @@ interface AuthRepository {
     suspend fun updateUserRole(userId: String, roleCode: String): AuthResult<Unit>
     suspend fun listDevices(): AuthResult<List<ManagedDevice>>
     suspend fun revokeDevice(deviceId: String, reason: String): AuthResult<Unit>
+    suspend fun listUserExceptions(userId: String): AuthResult<List<com.truckpark.management.domain.models.UserPermissionException>>
+    suspend fun addUserException(
+        userId: String,
+        permissionCode: String,
+        grantOrRemove: String,
+        reason: String,
+        expiresInHours: Int? = null,
+    ): AuthResult<Unit>
+    suspend fun revokeUserException(exceptionId: String): AuthResult<Unit>
     fun hasStoredSession(): Boolean
 }

@@ -27,7 +27,7 @@ This file lists what has been completed and what the app still needs, based on t
 
 ## Milestones
 
-### 2. Authentication, account approval and permissions (Core Built)
+### 2. Authentication, account approval and permissions (Completed)
 - **Built:**
   - Individual staff accounts with PBKDF2-HMAC-SHA256 (600,000 iterations) in Oracle PL/SQL.
   - Pre-signup email check (`auth/check-email` & `auth/request-signup-code`) so duplicate emails are rejected before entering a verification code, and unverified accounts never pollute `users`.
@@ -36,8 +36,8 @@ This file lists what has been completed and what the app still needs, based on t
   - Roles (`ADMIN`, `SUPERVISOR`, `RUNNER`) with server-side permission checks (`PKG_AUTHZ.require_permission`), Admin role switching (`admin/users/:id/approve`), and role-adaptive UI tabs/workspaces.
   - Self-service password reset (`auth/request-password-reset` & `auth/reset-password`) and device revocation (`admin/devices/:id/revoke`).
   - Immutable `audit_events` logging actor, time, and before/after states.
-- **Remaining in Milestone 2:**
-  - Per-user maximum device count enforcement UI and Admin per-person permission exception UI (`user_permission_exceptions` table is already in `schema.sql`).
+  - Maximum handset allocation policy (strict limit of max 2 active handsets per staff member) enforced on the server in `PKG_AUTH.login`.
+  - Per-user granular permission exceptions (`GRANT` / `REMOVE` overrides with business reason and optional expiry) backed by `user_permission_exceptions` table, ORDS endpoints, and interactive UI in the Admin Governance panel.
 
 ### 3. Truck visits and vehicles
 - Visit types: Quick, Overnight, Transit, Loading or unloading, Other.

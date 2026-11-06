@@ -376,6 +376,22 @@ class AuthRepositoryImpl(
     override suspend fun revokeDevice(deviceId: String, reason: String): AuthResult<Unit> =
         authorised { token -> remote.revokeDevice(token, deviceId, reason) }
 
+    override suspend fun listUserExceptions(userId: String): AuthResult<List<com.truckpark.management.domain.models.UserPermissionException>> =
+        authorised { token -> remote.listUserExceptions(token, userId) }
+
+    override suspend fun addUserException(
+        userId: String,
+        permissionCode: String,
+        grantOrRemove: String,
+        reason: String,
+        expiresInHours: Int?,
+    ): AuthResult<Unit> = authorised { token ->
+        remote.addUserException(token, userId, permissionCode, grantOrRemove, reason, expiresInHours)
+    }
+
+    override suspend fun revokeUserException(exceptionId: String): AuthResult<Unit> =
+        authorised { token -> remote.revokeUserException(token, exceptionId) }
+
     // ------------------------------------------------------------------ internals
 
     private fun resolvePendingAdminCode(): PendingCode? {

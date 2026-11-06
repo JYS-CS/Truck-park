@@ -106,6 +106,20 @@ CREATE OR REPLACE PACKAGE PKG_API AS
     p_authorization IN VARCHAR2, p_device_id IN VARCHAR2, p_reason IN VARCHAR2,
     p_status OUT NUMBER, p_body OUT CLOB);
 
+  PROCEDURE list_user_exceptions(
+    p_authorization IN VARCHAR2, p_user_id IN VARCHAR2,
+    p_status OUT NUMBER, p_body OUT CLOB);
+
+  PROCEDURE add_user_exception(
+    p_authorization IN VARCHAR2, p_user_id IN VARCHAR2,
+    p_permission_code IN VARCHAR2, p_grant_or_remove IN VARCHAR2,
+    p_reason IN VARCHAR2, p_expires_in_hours IN NUMBER,
+    p_status OUT NUMBER, p_body OUT CLOB);
+
+  PROCEDURE revoke_user_exception(
+    p_authorization IN VARCHAR2, p_exception_id IN VARCHAR2,
+    p_status OUT NUMBER, p_body OUT CLOB);
+
   -- Exposed so tests can check them directly, and because SQL inside the body calls them.
   FUNCTION request_id RETURN VARCHAR2;
   FUNCTION iso(p_ts IN TIMESTAMP WITH TIME ZONE) RETURN VARCHAR2;

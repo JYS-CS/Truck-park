@@ -234,6 +234,59 @@ class OrdsAuthRemoteDataSource(
         bearer = sessionToken,
     ) { }
 
+    override suspend fun listUserExceptions(
+        sessionToken: String,
+        userId: String,
+    ): AuthResult<List<com.truckpark.management.domain.models.UserPermissionException>> = call(
+        method = "GET",
+        path = "admin/users/${userId.trim()}/permissions/exceptions",
+        bearer = sessionToken,
+    ) { json ->
+        val items = json.optJSONArray("exceptions")
+        List(items?.length() ?: 0) { i ->
+            val obj = items!!.getJSONObject(i)
+            com.truckpark.management.domain.models.UserPermissionException(
+                id = obj.getString("id"),
+                userId = obj.getString("user_id"),
+                permissionCode = obj.getString("permission_code"),
+                grantOrRemove = obj.getString("grant_or_remove"),
+                reason = obj.optString("reason", ""),
+                approvedBy = obj.optString("approved_by").ifBlank { null },
+                approvedAt = obj.optString("approved_at").ifBlank { null },
+                expiresAt = obj.optString("expires_at").ifBlank { null },
+            )
+        }
+    }
+
+    override suspend fun addUserException(
+        sessionToken: String,
+        userId: String,
+        permissionCode: String,
+        grantOrRemove: String,
+        reason: String,
+        expiresInHours: Int?,
+    ): AuthResult<Unit> = call(
+        path = "admin/users/${userId.trim()}/permissions/exceptions",
+        body = JSONObject().apply {
+            put("permission_code", permissionCode.trim())
+            put("grant_or_remove", grantOrRemove.trim().uppercase())
+            put("reason", reason.trim())
+            if (expiresInHours != null && expiresInHours > 0) {
+                put("expires_in_hours", expiresInHours)
+            }
+        },
+        bearer = sessionToken,
+    ) { }
+
+    override suspend fun revokeUserException(
+        sessionToken: String,
+        exceptionId: String,
+    ): AuthResult<Unit> = call(
+        path = "admin/permissions/exceptions/${exceptionId.trim()}/revoke",
+        body = JSONObject(),
+        bearer = sessionToken,
+    ) { }
+
     // ------------------------------------------------------------------ plumbing
 
     private suspend fun <T> call(

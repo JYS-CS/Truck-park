@@ -70,6 +70,9 @@ Base: `/ords/<schema>/v1/` (e.g. `/ords/admin/v1/`). Errors are always `{ code, 
 | POST | `admin/users/:id/deactivate` | 200, 400, 401, 403 | Deactivate user and revoke sessions |
 | GET | `admin/devices` | 200, 401, 403 | List all registered handsets with owner info and revocation status |
 | POST | `admin/devices/:id/revoke` | 200, 400, 401, 403, 404 | Revoke device, terminate its sessions, and notify owner via Brevo |
+| GET | `admin/users/:id/permissions/exceptions` | 200, 400, 401, 403 | List permission overrides (`GRANT`/`REMOVE`) for a user |
+| POST | `admin/users/:id/permissions/exceptions` | 200, 400, 401, 403 | Add a granular permission override for a user with reason & expiry |
+| POST | `admin/permissions/exceptions/:id/revoke` | 200, 400, 401, 403, 404 | Revoke an existing permission override and refresh user permission version |
 
 ## Security behaviour
 
