@@ -28,8 +28,9 @@ import com.truckpark.management.core.designsystem.components.AppBackground
 import com.truckpark.management.core.designsystem.components.LiquidGlassNavigationBar
 import com.truckpark.management.domain.models.AuthUser
 import com.truckpark.management.feature.auth.AuthViewModel
-import com.truckpark.management.feature.placeholder.PlannedFeatureScreen
+import com.truckpark.management.feature.operations.OperationsScreen
 import com.truckpark.management.feature.settings.MoreOptionsBottomSheet
+import com.truckpark.management.feature.visits.VisitsScreen
 
 /**
  * Root container with floating iOS-style liquid glass navigation bar
@@ -91,7 +92,7 @@ fun TruckParkAppRoot(
             ) {
                 NavHost(navController = navController, startDestination = TopLevelDestination.Home.route) {
                     composable(TopLevelDestination.Home.route) {
-                        PlannedFeatureScreen(
+                        OperationsScreen(
                             title = stringResource(R.string.nav_home),
                             summary = stringResource(R.string.home_summary),
                             milestone = stringResource(R.string.home_milestone),
@@ -103,18 +104,13 @@ fun TruckParkAppRoot(
                         )
                     }
                     composable(TopLevelDestination.Visits.route) {
-                        PlannedFeatureScreen(
-                            title = stringResource(R.string.nav_visits),
-                            summary = stringResource(R.string.visits_summary),
-                            milestone = stringResource(R.string.visits_milestone),
-                            icon = TopLevelDestination.Visits.icon,
+                        VisitsScreen(
                             user = user,
-                            authViewModel = authViewModel,
                             onMenuClick = { moreSheetOpen = true },
                         )
                     }
                     composable(TopLevelDestination.Registers.route) {
-                        PlannedFeatureScreen(
+                        OperationsScreen(
                             title = stringResource(R.string.nav_registers),
                             summary = stringResource(R.string.registers_summary),
                             milestone = stringResource(R.string.registers_milestone),
@@ -125,7 +121,7 @@ fun TruckParkAppRoot(
                         )
                     }
                     composable(TopLevelDestination.Reports.route) {
-                        PlannedFeatureScreen(
+                        OperationsScreen(
                             title = stringResource(R.string.nav_reports),
                             summary = stringResource(R.string.reports_summary),
                             milestone = stringResource(R.string.reports_milestone),

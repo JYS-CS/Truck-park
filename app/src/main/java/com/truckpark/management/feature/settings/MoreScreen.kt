@@ -26,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
@@ -44,7 +45,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.truckpark.management.R
 import com.truckpark.management.core.common.ThemeMode
-import com.truckpark.management.core.designsystem.components.GlassCard
 import com.truckpark.management.core.designsystem.icons.TruckParkIcons
 import com.truckpark.management.domain.models.AuthUser
 
@@ -64,9 +64,21 @@ fun MoreScreen(themeMode: ThemeMode, onThemeModeSelected: (ThemeMode) -> Unit) {
             modifier = Modifier.semantics { heading() },
         )
         AppearanceCard(themeMode, onThemeModeSelected)
-        GlassCard(Modifier.fillMaxWidth()) {
-            Text(stringResource(R.string.about_title), style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.padding(top = 8.dp))
+        val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (dark) 0.35f else 0.55f))
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
+                .padding(16.dp),
+        ) {
+            Text(
+                stringResource(R.string.about_title),
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(Modifier.height(8.dp))
             Text(
                 stringResource(R.string.about_body),
                 style = MaterialTheme.typography.bodyMedium,
@@ -252,86 +264,93 @@ fun MoreOptionsBottomSheet(
                         .padding(bottom = 48.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
+                    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
                     if (user != null) {
-                        GlassCard(Modifier.fillMaxWidth()) {
-                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(44.dp)
-                                            .clip(CircleShape)
-                                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
-                                        contentAlignment = Alignment.Center,
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Person,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(24.dp),
-                                        )
-                                    }
-
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                        ) {
-                                            Text(
-                                                text = user.fullName.ifBlank { "Operator" },
-                                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                                color = MaterialTheme.colorScheme.onSurface,
-                                            )
-                                            Box(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(999.dp))
-                                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f))
-                                                    .padding(horizontal = 8.dp, vertical = 2.dp),
-                                            ) {
-                                                Text(
-                                                    text = user.primaryRole,
-                                                    style = MaterialTheme.typography.labelSmall.copy(
-                                                        fontWeight = FontWeight.Bold,
-                                                        fontSize = 10.sp,
-                                                    ),
-                                                    color = MaterialTheme.colorScheme.primary,
-                                                )
-                                            }
-                                        }
-                                        Text(
-                                            text = user.email,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
-                                }
-
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (dark) 0.35f else 0.55f))
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
                                 Box(
                                     modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f))
-                                        .border(
-                                            width = 1.dp,
-                                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.30f),
-                                            shape = RoundedCornerShape(12.dp),
-                                        )
-                                        .clickable {
-                                            onRefreshRole()
-                                            onDismissRequest()
-                                        }
-                                        .padding(vertical = 10.dp, horizontal = 14.dp),
+                                        .size(44.dp)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
                                     contentAlignment = Alignment.Center,
                                 ) {
-                                    Text(
-                                        text = "Sync Role & Permissions",
-                                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-                                        color = MaterialTheme.colorScheme.primary,
+                                    Icon(
+                                        imageVector = Icons.Default.Person,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(24.dp),
                                     )
                                 }
+
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    ) {
+                                        Text(
+                                            text = user.fullName.ifBlank { "Operator" },
+                                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(999.dp))
+                                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f))
+                                                .padding(horizontal = 8.dp, vertical = 2.dp),
+                                        ) {
+                                            Text(
+                                                text = user.primaryRole,
+                                                style = MaterialTheme.typography.labelSmall.copy(
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 10.sp,
+                                                ),
+                                                color = MaterialTheme.colorScheme.primary,
+                                            )
+                                        }
+                                    }
+                                    Text(
+                                        text = user.email,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f))
+                                    .border(
+                                        width = 1.dp,
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.30f),
+                                        shape = RoundedCornerShape(12.dp),
+                                    )
+                                    .clickable {
+                                        onRefreshRole()
+                                        onDismissRequest()
+                                    }
+                                    .padding(vertical = 10.dp, horizontal = 14.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    text = "Sync Role & Permissions",
+                                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
                             }
                         }
                     }
@@ -342,18 +361,25 @@ fun MoreOptionsBottomSheet(
                         onSelected = onThemeModeSelected,
                     )
 
-                    // About Card with clear, high-contrast text
-                    GlassCard(Modifier.fillMaxWidth()) {
+                    // About Card with solid colors
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (dark) 0.35f else 0.55f))
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
+                            .padding(16.dp),
+                    ) {
                         Text(
                             text = stringResource(R.string.about_title),
-                            style = MaterialTheme.typography.titleMedium,
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                         Spacer(Modifier.height(8.dp))
                         Text(
                             text = stringResource(R.string.about_body),
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
 

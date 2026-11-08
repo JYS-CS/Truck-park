@@ -191,4 +191,74 @@ class OrdsAuthRemoteDataSourceTest {
         assertEquals("https://host/ords/truckpark/v1/admin/devices/dev-99/revoke", request.url)
         assertEquals("Lost or stolen handset", JSONObject(request.body!!).getString("reason"))
     }
+
+    @Test
+    fun reinstateDevice_postsToReinstateEndpoint() = runBlocking {
+        val transport = FakeTransport { HttpResponse(200, """{"ok":true}""") }
+        val res = source(transport).reinstateDevice("tok-admin", "dev-99")
+
+        assertTrue(res is AuthResult.Success)
+        val request = transport.requests.single()
+        assertEquals("POST", request.method)
+        assertEquals("https://host/ords/truckpark/v1/admin/devices/dev-99/reinstate", request.url)
+    }
+
+    @Test
+    fun deviceRevoked_mapsUserFacingDisabledMessage() = runBlocking {
+        val transport = FakeTransport {
+            HttpResponse(401, """{"code":"DEVICE_REVOKED","message":"This device has been revoked."}""")
+        }
+        val res = source(transport).signIn("user@x.com", "pass", "dev-1", "Phone")
+            as AuthResult.Failure
+
+        assertEquals(AuthError.DEVICE_REVOKED, res.error.code)
+        assertEquals(
+            "Access from this device has been disabled, please contact your system administrator.",
+            res.error.message,
+        )
+    }
+
+    @Test
+    fun requestSignUpCode_withDeviceId_postsDeviceId() = runBlocking {
+        val transport = FakeTransport { HttpResponse(200, """{"status":"SENT"}""") }
+        source(transport).requestSignUpCode("jane@x.com", "Jane Runner", "dev-test-123")
+
+        val request = transport.requests.single()
+        val body = JSONObject(request.body!!)
+        assertEquals("dev-test-123", body.getString("device_id"))
+    }
+
+    @Test
+    fun register_withDeviceId_postsDeviceId() = runBlocking {
+        val transport = FakeTransport { HttpResponse(201, """{"user_id":"u99"}""") }
+        source(transport).register("Jane", "j@x.com", "123", "P@ss1234", "123456", "dev-test-123")
+
+        val request = transport.requests.single()
+        val body = JSONObject(request.body!!)
+        assertEquals("dev-test-123", body.getString("device_id"))
+    }
+
+    @Test
+    fun requestPasswordReset_withDeviceId_postsDeviceId() = runBlocking {
+        val transport = FakeTransport { HttpResponse(200, """{"status":"SENT"}""") }
+        source(transport).requestPasswordReset("jane@x.com", "dev-test-123")
+
+        val request = transport.requests.single()
+        val body = JSONObject(request.body!!)
+        assertEquals("dev-test-123", body.getString("device_id"))
+        assertEquals("jane@x.com", body.getString("email"))
+    }
+
+    @Test
+    fun resetPassword_withDeviceId_postsDeviceId() = runBlocking {
+        val transport = FakeTransport { HttpResponse(200, """{"ok":true}""") }
+        source(transport).resetPassword("jane@x.com", "123456", "NewP@ss1!", "dev-test-123")
+
+        val request = transport.requests.single()
+        val body = JSONObject(request.body!!)
+        assertEquals("dev-test-123", body.getString("device_id"))
+        assertEquals("jane@x.com", body.getString("email"))
+        assertEquals("123456", body.getString("code"))
+        assertEquals("NewP@ss1!", body.getString("new_password"))
+    }
 }

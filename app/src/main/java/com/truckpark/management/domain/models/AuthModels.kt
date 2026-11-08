@@ -8,6 +8,7 @@ data class AuthUser(
     val fullName: String,
     val email: String,
     val status: String,
+    val phone: String? = null,
     val emailVerified: Boolean = false,
     val roles: List<String>,
     val permissions: Set<String>,
@@ -84,8 +85,9 @@ data class AuthSession(
     val sessionToken: String,
     val refreshToken: String,
     val expiresAt: Instant,
+    val loginAt: Instant = Instant.now(),
 ) {
-    override fun toString(): String = "AuthSession(expiresAt=$expiresAt, tokens=<redacted>)"
+    override fun toString(): String = "AuthSession(expiresAt=$expiresAt, loginAt=$loginAt, tokens=<redacted>)"
 }
 
 /** What a successful sign-in gives back. */

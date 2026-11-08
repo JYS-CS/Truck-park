@@ -47,7 +47,7 @@ app/src/main/java/com/truckpark/management/
 │   └── repositories/         ThemeRepository, AuthRepository
 ├── feature/
 │   ├── auth/                 LiquidMetalAuthScreen, AdminSecuritySetupScreen, EmailCodeVerification, AuthViewModel
-│   ├── placeholder/          PlannedFeatureScreen (role-specific workspace cards + Admin Role Management panel)
+│   ├── operations/           OperationsScreen (role-specific workspace cards + Admin Role Management panel)
 │   ├── settings/             MoreOptionsBottomSheet (user profile, role sync, theme picker, Sign Out), ThemeViewModel
 │   └── splash/               HibiscusAnimatedSplashScreen
 └── navigation/

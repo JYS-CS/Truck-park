@@ -21,6 +21,8 @@ interface AuthRepository {
         newEmail: String,
         newPassword: String,
         code: String,
+        fullName: String? = null,
+        phone: String? = null,
     ): AuthResult<Unit>
     suspend fun sendVerificationCode(email: String? = null): AuthResult<Unit>
     suspend fun changePassword(newEmail: String, newPassword: String): AuthResult<Unit>
@@ -38,6 +40,7 @@ interface AuthRepository {
     suspend fun updateUserRole(userId: String, roleCode: String): AuthResult<Unit>
     suspend fun listDevices(): AuthResult<List<ManagedDevice>>
     suspend fun revokeDevice(deviceId: String, reason: String): AuthResult<Unit>
+    suspend fun reinstateDevice(deviceId: String): AuthResult<Unit>
     suspend fun listUserExceptions(userId: String): AuthResult<List<com.truckpark.management.domain.models.UserPermissionException>>
     suspend fun addUserException(
         userId: String,
@@ -47,5 +50,11 @@ interface AuthRepository {
         expiresInHours: Int? = null,
     ): AuthResult<Unit>
     suspend fun revokeUserException(exceptionId: String): AuthResult<Unit>
+    /**
+     * Runs [call] with a valid session token, refreshing the token first when it is about to
+     * expire and retrying once if the server says it already has. Used by other features' repositories.
+     */
+    suspend fun <T> authorised(call: suspend (sessionToken: String) -> AuthResult<T>): AuthResult<T>
     fun hasStoredSession(): Boolean
+    fun getSessionRemainingMillis(): Long? = null
 }

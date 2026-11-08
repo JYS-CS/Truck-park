@@ -35,104 +35,8 @@
 
     <string name="status_label_format">Status: %1$s</string>
 
-    <!-- Personalized Greetings by time of day (15-20 varied lines with {name}) -->
-    <string-array name="greetings_morning">
-        <item>Good morning, {name}. Ready for today’s gate operations?</item>
-        <item>Morning, {name}. The yard is gearing up for a busy day.</item>
-        <item>Rise and shine, {name}. Here is your morning operational overview.</item>
-        <item>Good morning, {name}. Early arrivals are on track.</item>
-        <item>Welcome back, {name}. Let’s start the morning shift strong.</item>
-        <item>A fresh morning, {name}. Your active fleet overview is ready.</item>
-        <item>Good morning, {name}. Gate schedules and handsets are set.</item>
-        <item>Morning check-in, {name}. Hope you have a productive shift today.</item>
-        <item>Hello, {name}. Early morning gate flow is steady.</item>
-        <item>Good day, {name}. Shift handovers and security logs are ready for review.</item>
-        <item>Top of the morning, {name}. Systems and gate lanes are active.</item>
-        <item>Welcome to your morning shift, {name}. Have a smooth operation today.</item>
-        <item>Good morning, {name}. Operational dashboards and handsets are synced.</item>
-        <item>Morning, {name}. Let’s keep yard throughput safe and efficient.</item>
-        <item>Greetings, {name}. All morning gates and monitoring are running.</item>
-        <item>Good morning, {name}. Ready to oversee yard traffic today.</item>
-    </string-array>
-
-    <string-array name="greetings_midday">
-        <item>Good day, {name}. Midday yard traffic is at peak flow.</item>
-        <item>Midday check-in, {name}. How is the yard pacing?</item>
-        <item>Hello {name}, midday turnarounds are running steadily.</item>
-        <item>Afternoon is approaching, {name}. Here is your live overview.</item>
-        <item>Good day, {name}. Gate throughput and dock queues are active.</item>
-        <item>Welcome back, {name}. Checking in on peak midday movements.</item>
-        <item>Hello {name}, monitoring fleet arrivals and turnarounds.</item>
-        <item>Midday status update, {name}. Everything is on schedule.</item>
-        <item>Good day, {name}. Keep an eye on peak bay turnarounds.</item>
-        <item>Hello, {name}. Lunchtime fleet operations are well underway.</item>
-        <item>Midday review, {name}. Active gate runners are in position.</item>
-        <item>Good day, {name}. Peak traffic flow is steady across all bays.</item>
-        <item>Checking in, {name}. Midday dock turnarounds look smooth.</item>
-        <item>Hello {name}, keeping yard velocity high this midday.</item>
-        <item>Good day, {name}. Reviewing live handset telemetry and staff access.</item>
-        <item>Midday status, {name}. Yard bays and dispatch are running smoothly.</item>
-    </string-array>
-
-    <string-array name="greetings_afternoon">
-        <item>Good afternoon, {name}. Wrapping up today’s major shipments?</item>
-        <item>Afternoon, {name}. Outbound gate dispatches are picking up.</item>
-        <item>Hello {name}, late afternoon turnarounds are in full swing.</item>
-        <item>Good afternoon, {name}. Here is your late dispatch progress.</item>
-        <item>Afternoon check-in, {name}. Yard operations remain steady.</item>
-        <item>Welcome back, {name}. Afternoon outbound queues are active.</item>
-        <item>Good afternoon, {name}. Tracking late freight and carrier movements.</item>
-        <item>Afternoon update, {name}. Evening handover preparations are coming up.</item>
-        <item>Hello {name}, keeping dispatches moving smoothly this afternoon.</item>
-        <item>Good afternoon, {name}. Gate turnarounds are well on pace.</item>
-        <item>Afternoon shift review, {name}. Outbound dock traffic is steady.</item>
-        <item>Checking in this afternoon, {name}. Carrier turnarounds are on time.</item>
-        <item>Good afternoon, {name}. Let’s close out today’s planned arrivals strong.</item>
-        <item>Afternoon, {name}. Verifying gate departures and active seal checks.</item>
-        <item>Hello, {name}. Hope your afternoon operations are going smoothly.</item>
-        <item>Good afternoon, {name}. The yard is running on schedule.</item>
-    </string-array>
-
-    <string-array name="greetings_evening">
-        <item>Good evening, {name}. Night shift handovers are underway.</item>
-        <item>Evening, {name}. Yard security and overnight monitoring active.</item>
-        <item>Hello {name}, reviewing evening departures and overnight parking.</item>
-        <item>Good evening, {name}. Settling into the night operations routine.</item>
-        <item>Evening check-in, {name}. Overnight truck arrivals are steady.</item>
-        <item>Welcome back, {name}. Evening yard lanes are clear and secured.</item>
-        <item>Good evening, {name}. Monitoring overnight staging and safe parking.</item>
-        <item>Evening overview, {name}. Gate security check-ins are active.</item>
-        <item>Hello {name}, tracking late arrivals and overnight dock assignments.</item>
-        <item>Good evening, {name}. Handset telemetry and night staff are synced.</item>
-        <item>Evening status, {name}. Overnight bays are operating quietly.</item>
-        <item>Checking in, {name}. Hope your evening shift is safe and calm.</item>
-        <item>Good evening, {name}. All overnight perimeter checks are on schedule.</item>
-        <item>Evening, {name}. Preparing for tomorrow’s scheduled freight dispatches.</item>
-        <item>Hello, {name}. Secure evening operations are in place.</item>
-        <item>Good evening, {name}. Yard perimeter and night gates are protected.</item>
-    </string-array>
-
-    <string-array name="greetings_night">
-        <item>Working late, {name}. Night monitoring is active and alert.</item>
-        <item>Late night check-in, {name}. Keeping the yard secure.</item>
-        <item>Quiet hours, {name}. Overnight gate monitoring in progress.</item>
-        <item>Hello {name}, early dawn operations will resume shortly.</item>
-        <item>Safe watch, {name}. Night shift systems are operating smoothly.</item>
-        <item>Good night, {name}. Overnight truck parking is monitored and safe.</item>
-        <item>Late watch, {name}. Perimeter and bay security checks are steady.</item>
-        <item>Hello {name}, tracking overnight arrivals through the quiet hours.</item>
-        <item>Staying vigilant, {name}. Yard perimeter and access control are secure.</item>
-        <item>Late shift check, {name}. Overnight gate logs are recording accurately.</item>
-        <item>Quiet night, {name}. All staged vehicles and cargo are safe.</item>
-        <item>Hello {name}, keeping the fleet secure through the early morning hours.</item>
-        <item>Working the late hours, {name}. Systems are operational and locked in.</item>
-        <item>Late watch update, {name}. Safe parking status is green across all bays.</item>
-        <item>Night hours, {name}. Handsets and security credentials are functioning.</item>
-        <item>Staying focused, {name}. Night operations are fully under control.</item>
-    </string-array>
-
     <!-- Admin Panel User-visible Strings -->
-    <string name="admin_panel_title">Access &amp; Handset Governance</string>
+    <string name="admin_panel_title">Access &amp; Handsets</string>
     <string name="admin_panel_subtitle">Centralized administration for staff assignments and authorized handsets.</string>
     <string name="tile_staff_label">STAFF</string>
     <string name="tile_handsets_label">HANDSETS</string>
@@ -169,7 +73,15 @@
     <string name="override_grant">GRANT (Grant access)</string>
     <string name="override_remove">REMOVE (Block access)</string>
     <string name="lbl_override_reason">Business reason</string>
-    <string name="lbl_expires_hours">Expires in (hours, optional)</string>
+    <string name="lbl_expires_hours">Duration / Expiration (Optional)</string>
+    <string name="lbl_duration_type">Duration / Expiry</string>
+    <string name="duration_permanent">Permanent</string>
+    <string name="duration_hours">Hours</string>
+    <string name="duration_days">Days</string>
+    <string name="duration_permanent_hint">Permanent override · Valid indefinitely until explicitly revoked</string>
+    <string name="hint_override_hours">Enter hours (e.g. 8)</string>
+    <string name="hint_override_days">Enter days (e.g. 7)</string>
+    <string name="hint_override_reason">Explain why this override is needed (e.g. weekend coverage, temporary audit)...</string>
     <string name="btn_save_override">Save override</string>
     <string name="btn_revoke_override">Revoke</string>
     <string name="btn_edit_role">Edit role</string>
@@ -180,6 +92,10 @@
     <string name="saving_role">Updating role…</string>
     <string name="revoking_device">Revoking handset…</string>
     <string name="btn_revoke_handset">Revoke Handset</string>
+    <string name="btn_allow_handset">Allow Handset</string>
+    <string name="btn_confirm_allow">Allow Handset</string>
+    <string name="allowing_device">Allowing handset…</string>
+    <string name="reinstate_handset_confirm_msg">Allowing this handset will restore its access to the system. The user will be able to sign in on this device again.</string>
     <string name="select_revocation_reason">Select revocation reason:</string>
     <string name="tag_this_handset">THIS HANDSET</string>
     <string name="revoked_reason_format">Revoked: %1$s</string>
@@ -190,4 +106,50 @@
     <string name="reason_staff_reassigned">Staff member reassigned</string>
     <string name="reason_decommissioned">Decommissioned device</string>
     <string name="reason_policy_violation">Security policy violation</string>
+    <string name="reason_other">Other</string>
+    <string name="hint_custom_revoke_reason">Specify revocation details…</string>
+    <string name="lbl_custom_reason_title">Specify Reason Details</string>
+    <string name="btn_back_to_handsets">Back to handsets</string>
+    <string name="lbl_device_name">Device model</string>
+    <string name="lbl_device_id">Device ID</string>
+    <string name="lbl_assigned_to">Assigned staff</string>
+    <string name="lbl_registered_at">Registered</string>
+    <string name="lbl_last_active">Last active</string>
+    <string name="lbl_revoked_at">Revoked at</string>
+    <string name="lbl_revoke_reason">Revocation reason</string>
+    <string name="this_device_current_note">This is your currently active handset for this session. It cannot be revoked while in use.</string>
+    <string name="revoke_handset_confirm_warn">Revoking this handset will immediately invalidate its active session and block this device from accessing the system.</string>
+
+    <!-- Milestone 3: Gate Operations & Visits -->
+    <string name="visits_title">Gate Operations</string>
+    <string name="visits_subtitle">Active yard tracking &amp; offline gate control</string>
+    <string name="btn_log_arrival">Log Arrival</string>
+    <string name="btn_log_departure">Log Departure</string>
+    <string name="btn_confirm_arrival">Confirm Arrival</string>
+    <string name="btn_confirm_departure">Confirm Departure</string>
+    <string name="lbl_active_on_site">%1$d active on site</string>
+    <string name="hint_search_visits">Search plate, driver, or reference…</string>
+    <string name="empty_visits_title">No Active Trucks On Site</string>
+    <string name="empty_visits_subtitle">All gates are clear. Tap Log Arrival below to check-in an arriving truck.</string>
+    <string name="dialog_arrival_title">Gate Arrival Check-In</string>
+    <string name="dialog_departure_title">Gate Departure Check-Out</string>
+    <string name="lbl_plate_number">Truck Registration Plate</string>
+    <string name="hint_plate_number">e.g. BAE 4821</string>
+    <string name="lbl_visit_type">Visit Type</string>
+    <string name="lbl_driver_name">Driver Full Name</string>
+    <string name="hint_driver_name">Optional</string>
+    <string name="lbl_driver_phone">Driver Phone (Zambia +260)</string>
+    <string name="hint_driver_phone">978656534</string>
+    <string name="lbl_arrival_notes">Arrival Cargo / Gate Notes</string>
+    <string name="hint_arrival_notes">Optional cargo description, trailer, or inspection notes</string>
+    <string name="lbl_departure_notes">Departure Notes</string>
+    <string name="hint_departure_notes">Optional gate pass or check-out inspection notes</string>
+    <string name="warn_duplicate_open_title">Truck Already On Site</string>
+    <string name="warn_duplicate_open_msg">Truck %1$s already has an open visit (#%2$s).</string>
+    <string name="lbl_override_duplicate">Supervisor override: allow duplicate open visit</string>
+    <string name="btn_sync_now">Sync Now</string>
+    <string name="lbl_pending_sync">%1$d pending sync</string>
+    <string name="lbl_synced_cloud">Synced</string>
+    <string name="lbl_offline_local">Saved locally</string>
+    <string name="lbl_conflict">Conflict</string>
 </resources>

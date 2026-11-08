@@ -143,25 +143,25 @@ BEGIN
   add_handler('auth/refresh', 'POST',
     'PKG_API.refresh(:refresh_token, :device_id, v_s, v_b);');
   add_handler('auth/accept-invite', 'POST',
-    'PKG_API.accept_invite(:token, :full_name, :password, v_s, v_b);');
+    'PKG_API.accept_invite(:token, :full_name, :password, :device_id, v_s, v_b);');
   add_handler('auth/check-email', 'POST',
-    'PKG_API.check_email(:email, v_s, v_b);');
+    'PKG_API.check_email(:email, :device_id, v_s, v_b);');
   add_handler('auth/request-signup-code', 'POST',
-    'PKG_API.request_signup_code(:email, :full_name, v_s, v_b);');
+    'PKG_API.request_signup_code(:email, :full_name, :device_id, v_s, v_b);');
   add_handler('auth/register', 'POST',
-    'PKG_API.register(:full_name, :email, :phone, :password, :code, v_s, v_b);');
+    'PKG_API.register(:full_name, :email, :phone, :password, :code, :device_id, v_s, v_b);');
   add_handler('auth/verify-email', 'POST',
     'PKG_API.verify_email(:user_id, :code, :authorization, v_s, v_b);');
   add_handler('auth/request-password-reset', 'POST',
-    'PKG_API.request_password_reset(:email, v_s, v_b);');
+    'PKG_API.request_password_reset(:email, :device_id, v_s, v_b);');
   add_handler('auth/reset-password', 'POST',
-    'PKG_API.reset_password(:email, :code, :new_password, v_s, v_b);');
+    'PKG_API.reset_password(:email, :code, :new_password, :device_id, v_s, v_b);');
 
   -- Signed in ---------------------------------------------------------------
   add_handler('auth/logout', 'POST',
     'PKG_API.logout(:authorization, v_s, v_b);');
   add_handler('auth/change-password', 'POST',
-    'PKG_API.change_password(:authorization, :new_email, :new_password, :code, v_s, v_b);');
+    'PKG_API.change_password(:authorization, :new_email, :new_password, :code, :full_name, :phone, v_s, v_b);');
   add_handler('auth/send-verification-code', 'POST',
     'PKG_API.send_verification_code(:authorization, :email, v_s, v_b);');
   add_handler('me', 'GET',
@@ -182,12 +182,22 @@ BEGIN
     'PKG_API.list_devices(:authorization, v_s, v_b);');
   add_handler('admin/devices/:id/revoke', 'POST',
     'PKG_API.revoke_device(:authorization, :id, :reason, v_s, v_b);');
+  add_handler('admin/devices/:id/reinstate', 'POST',
+    'PKG_API.reinstate_device(:authorization, :id, v_s, v_b);');
   add_handler('admin/users/:id/permissions/exceptions', 'GET',
     'PKG_API.list_user_exceptions(:authorization, :id, v_s, v_b);');
   add_handler('admin/users/:id/permissions/exceptions', 'POST',
     'PKG_API.add_user_exception(:authorization, :id, :permission_code, :grant_or_remove, :reason, :expires_in_hours, v_s, v_b);');
   add_handler('admin/permissions/exceptions/:id/revoke', 'POST',
     'PKG_API.revoke_user_exception(:authorization, :id, v_s, v_b);');
+
+  -- Truck visits (Milestone 3) ----------------------------------------------
+  add_handler('visits', 'GET',
+    'PKG_API.list_visits(:authorization, :visit_status, v_s, v_b);');
+  add_handler('visits/arrive', 'POST',
+    'PKG_API.record_arrival(:authorization, :visit_id, :plate_number, :visit_type, :driver_name, :driver_phone, :notes, :arrived_at, :allow_duplicate, v_s, v_b);');
+  add_handler('visits/:id/depart', 'POST',
+    'PKG_API.record_departure(:authorization, :id, :departed_at, :notes, v_s, v_b);');
 
   COMMIT;
 END;

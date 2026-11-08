@@ -23,6 +23,17 @@ object AppConfig {
     const val ORDS_API_VERSION: String = BuildConfig.ORDS_API_VERSION
 
     /**
+     * Raw session timeout string from .env (e.g. "20h", "1d").
+     */
+    const val SESSION_TIMEOUT_RAW: String = BuildConfig.SESSION_TIMEOUT_RAW
+
+    /**
+     * Session auto-logout timeout in seconds configured via SESSION_TIMEOUT in .env.
+     * Defaults to 20 hours (72000s) if not specified or invalid.
+     */
+    const val SESSION_TIMEOUT_SECONDS: Long = BuildConfig.SESSION_TIMEOUT_SECONDS
+
+    /**
      * Fully qualified base URL for API network requests:
      * e.g. https://gf339ddde581301-hibiscusstruckpark.adb.af-johannesburg-1.oraclecloudapps.com/ords/admin/v1/
      */

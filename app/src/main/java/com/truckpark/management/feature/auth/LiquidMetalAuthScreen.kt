@@ -102,46 +102,12 @@ import com.truckpark.management.core.designsystem.components.AppBackground
 import kotlinx.coroutines.launch
 import kotlin.math.sin
 
-private data class PasswordRule(
+internal data class PasswordRule(
     val title: String,
     val isSatisfied: (String) -> Boolean,
 )
 
-private data class CountryDialCode(
-    val iso: String,
-    val name: String,
-    val dialCode: String,
-    val flag: String,
-)
-
-private val LIGHTWEIGHT_COUNTRY_CODES = listOf(
-    CountryDialCode("ZM", "Zambia", "+260", "🇿🇲"),
-    CountryDialCode("ZA", "South Africa", "+27", "🇿🇦"),
-    CountryDialCode("ZW", "Zimbabwe", "+263", "🇿🇼"),
-    CountryDialCode("CD", "DR Congo", "+243", "🇨🇩"),
-    CountryDialCode("TZ", "Tanzania", "+255", "🇹🇿"),
-    CountryDialCode("MW", "Malawi", "+265", "🇲🇼"),
-    CountryDialCode("BW", "Botswana", "+267", "🇧🇼"),
-    CountryDialCode("NA", "Namibia", "+264", "🇳🇦"),
-    CountryDialCode("MZ", "Mozambique", "+258", "🇲🇿"),
-    CountryDialCode("AO", "Angola", "+244", "🇦🇴"),
-    CountryDialCode("KE", "Kenya", "+254", "🇰🇪"),
-    CountryDialCode("UG", "Uganda", "+256", "🇺🇬"),
-    CountryDialCode("RW", "Rwanda", "+250", "🇷🇼"),
-    CountryDialCode("BI", "Burundi", "+257", "🇧🇮"),
-    CountryDialCode("ET", "Ethiopia", "+251", "🇪🇹"),
-    CountryDialCode("NG", "Nigeria", "+234", "🇳🇬"),
-    CountryDialCode("GH", "Ghana", "+233", "🇬🇭"),
-    CountryDialCode("GB", "United Kingdom", "+44", "🇬🇧"),
-    CountryDialCode("US", "United States", "+1", "🇺🇸"),
-    CountryDialCode("AE", "UAE", "+971", "🇦🇪"),
-    CountryDialCode("IN", "India", "+91", "🇮🇳"),
-    CountryDialCode("CN", "China", "+86", "🇨🇳"),
-)
-
-private val DEFAULT_COUNTRY_CODE = LIGHTWEIGHT_COUNTRY_CODES.first() // Zambia (+260)
-
-private object AuthSecurityUtils {
+internal object AuthSecurityUtils {
     private val SQL_INJECTION_KEYWORDS = Regex(
         "(?i)\\b(SELECT|INSERT|UPDATE|DELETE|DROP|UNION|ALTER|CREATE|EXEC|EXECUTE|TRUNCATE|DECLARE)\\b"
     )
@@ -234,7 +200,7 @@ private object AuthSecurityUtils {
         return null
     }
 
-    fun formatPhoneWithDialCode(localInput: String, dialCode: String): String {
+    fun formatPhoneWithDialCode(localInput: String, dialCode: String = DEFAULT_COUNTRY_CODE.dialCode): String {
         val trimmed = localInput.trim()
         if (trimmed.isEmpty()) return ""
         val cleanDial = if (dialCode.startsWith("+")) dialCode else "+$dialCode"
@@ -242,6 +208,7 @@ private object AuthSecurityUtils {
         val rawDigits = trimmed.filter { it.isDigit() }
         val localDigits = when {
             trimmed.startsWith(cleanDial) -> rawDigits.removePrefix(dialDigits)
+            rawDigits.startsWith(dialDigits) -> rawDigits.removePrefix(dialDigits)
             rawDigits.startsWith("0") -> rawDigits.drop(1)
             else -> rawDigits
         }
@@ -252,14 +219,52 @@ private object AuthSecurityUtils {
         val trimmed = input.trim()
         if (trimmed.isEmpty()) return "Phone number is required"
         if (hasDangerousPattern(trimmed)) return "Invalid or unsafe input detected"
-        val localDigits = trimmed.filter { it.isDigit() }.let {
-            if (it.startsWith("0")) it.drop(1) else it
-        }
-        val fullDigits = formatPhoneWithDialCode(trimmed, dialCode).filter { it.isDigit() }
-        if (localDigits.length < 6 || fullDigits.length !in 7..15) {
-            return "Enter a valid phone number (7-15 digits)"
+        val formatted = formatPhoneWithDialCode(trimmed, dialCode)
+        val digits = formatted.filter { it.isDigit() }
+        // Zambian numbers must be 12 digits starting with +260 (e.g. +260978656534)
+        if (!formatted.startsWith("+260") || digits.length != 12) {
+            return "Phone number must be 12 digits starting with +260 (e.g. +260978656534)"
         }
         return null
+    }
+
+    fun filterPhoneInput(newInput: String, previousValue: String): String {
+        val sanitized = sanitizePhone(newInput)
+        // If user is deleting characters, always allow
+        if (sanitized.length < previousValue.length) {
+            return sanitized
+        }
+        val rawDigits = sanitized.filter { it.isDigit() }
+        val isZeroPrefixed = rawDigits.startsWith("0") && !sanitized.startsWith("+")
+        val isCountryPrefixed = sanitized.startsWith("+") || rawDigits.startsWith("260")
+
+        val maxDigits = when {
+            isCountryPrefixed -> 12 // +260 or 260 + 9 subscriber digits = 12 digits
+            isZeroPrefixed -> 10    // 0 + 9 subscriber digits = 10 digits
+            else -> 9              // 9 subscriber digits
+        }
+
+        if (rawDigits.length > maxDigits) {
+            // Typing beyond the required digits is blocked; only deletion is allowed
+            if (newInput.length == previousValue.length + 1) {
+                return previousValue
+            }
+            // For paste events, safely truncate to max allowed digits
+            var count = 0
+            val sb = java.lang.StringBuilder()
+            for (c in sanitized) {
+                if (c.isDigit()) {
+                    if (count < maxDigits) {
+                        sb.append(c)
+                        count++
+                    }
+                } else {
+                    sb.append(c)
+                }
+            }
+            return sb.toString()
+        }
+        return sanitized
     }
 
     fun validatePassword(input: String, requireComplexity: Boolean = false): String? {
@@ -777,8 +782,13 @@ fun LiquidMetalAuthScreen(
                                         .background(if (dark) Color(0xFF450A0A).copy(alpha = 0.7f) else Color(0xFFFEE2E2))
                                         .border(1.dp, if (dark) Color(0xFFDC2626).copy(alpha = 0.6f) else Color(0xFFF87171), RoundedCornerShape(14.dp))
                                         .padding(horizontal = 16.dp, vertical = 12.dp),
+                                    contentAlignment = Alignment.Center,
                                 ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center,
+                                    ) {
                                         Icon(
                                             imageVector = Icons.Default.Warning,
                                             contentDescription = null,
@@ -789,7 +799,9 @@ fun LiquidMetalAuthScreen(
                                         Text(
                                             text = serverErrorMessage ?: "",
                                             color = if (dark) Color(0xFFFCA5A5) else Color(0xFFB91C1C),
+                                            textAlign = TextAlign.Center,
                                             style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                                            modifier = Modifier.weight(1f, fill = false),
                                         )
                                     }
                                 }
@@ -972,8 +984,13 @@ fun LiquidMetalAuthScreen(
                                                 .background(if (dark) Color(0xFF450A0A).copy(alpha = 0.7f) else Color(0xFFFEE2E2))
                                                 .border(1.dp, if (dark) Color(0xFFDC2626).copy(alpha = 0.6f) else Color(0xFFF87171), RoundedCornerShape(14.dp))
                                                 .padding(horizontal = 16.dp, vertical = 12.dp),
+                                            contentAlignment = Alignment.Center,
                                         ) {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.Center,
+                                            ) {
                                                 Icon(
                                                     imageVector = Icons.Default.Warning,
                                                     contentDescription = null,
@@ -984,7 +1001,9 @@ fun LiquidMetalAuthScreen(
                                                 Text(
                                                     text = serverErrorMessage ?: "",
                                                     color = if (dark) Color(0xFFFCA5A5) else Color(0xFFB91C1C),
+                                                    textAlign = TextAlign.Center,
                                                     style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                                                    modifier = Modifier.weight(1f, fill = false),
                                                 )
                                             }
                                         }
@@ -1070,16 +1089,20 @@ fun LiquidMetalAuthScreen(
                                     dark = dark,
                                 )
 
+                                val isPhoneComplete = remember(phoneNumber, selectedCountry.dialCode) {
+                                    phoneNumber.isNotBlank() && AuthSecurityUtils.validatePhone(phoneNumber, selectedCountry.dialCode) == null
+                                }
+
                                 LiquidCapsuleInput(
                                     value = phoneNumber,
                                     onValueChange = { input ->
-                                        val sanitized = AuthSecurityUtils.sanitizePhone(input)
-                                        phoneNumber = sanitized
-                                        if (phoneNumberError != null) {
-                                            phoneNumberError = AuthSecurityUtils.validatePhone(sanitized, selectedCountry.dialCode)
+                                        val filtered = AuthSecurityUtils.filterPhoneInput(input, phoneNumber)
+                                        phoneNumber = filtered
+                                        if (phoneNumberError != null || AuthSecurityUtils.validatePhone(filtered, selectedCountry.dialCode) == null) {
+                                            phoneNumberError = AuthSecurityUtils.validatePhone(filtered, selectedCountry.dialCode)
                                         }
                                     },
-                                    placeholder = "97 123 4567",
+                                    placeholder = "978656534",
                                     icon = Icons.Default.Phone,
                                     leadingAccessory = {
                                         LightweightCountryCodeSelector(
@@ -1095,6 +1118,29 @@ fun LiquidMetalAuthScreen(
                                             },
                                             dark = dark,
                                         )
+                                    },
+                                    trailingAccessory = {
+                                        AnimatedVisibility(
+                                            visible = isPhoneComplete,
+                                            enter = fadeIn(),
+                                            exit = fadeOut(),
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(24.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Color(0xFF10B981).copy(alpha = 0.18f))
+                                                    .border(1.dp, Color(0xFF10B981).copy(alpha = 0.7f), CircleShape),
+                                                contentAlignment = Alignment.Center,
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Check,
+                                                    contentDescription = "Valid phone number",
+                                                    tint = Color(0xFF10B981),
+                                                    modifier = Modifier.size(15.dp),
+                                                )
+                                            }
+                                        }
                                     },
                                     errorMessage = phoneNumberError,
                                     keyboardType = KeyboardType.Phone,
@@ -1150,8 +1196,13 @@ fun LiquidMetalAuthScreen(
                                                 .background(if (dark) Color(0xFF450A0A).copy(alpha = 0.7f) else Color(0xFFFEE2E2))
                                                 .border(1.dp, if (dark) Color(0xFFDC2626).copy(alpha = 0.6f) else Color(0xFFF87171), RoundedCornerShape(14.dp))
                                                 .padding(horizontal = 16.dp, vertical = 12.dp),
+                                            contentAlignment = Alignment.Center,
                                         ) {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.Center,
+                                            ) {
                                                 Icon(
                                                     imageVector = Icons.Default.Warning,
                                                     contentDescription = null,
@@ -1162,7 +1213,9 @@ fun LiquidMetalAuthScreen(
                                                 Text(
                                                     text = serverErrorMessage ?: "",
                                                     color = if (dark) Color(0xFFFCA5A5) else Color(0xFFB91C1C),
+                                                    textAlign = TextAlign.Center,
                                                     style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                                                    modifier = Modifier.weight(1f, fill = false),
                                                 )
                                             }
                                         }
@@ -1295,6 +1348,7 @@ private fun LightweightCountryCodeSelector(
     dark: Boolean,
 ) {
     val scheme = MaterialTheme.colorScheme
+    val hasMultipleCountries = LIGHTWEIGHT_COUNTRY_CODES.size > 1
     var expanded by remember { mutableStateOf(false) }
 
     Box {
@@ -1305,8 +1359,16 @@ private fun LightweightCountryCodeSelector(
                     if (dark) Color.White.copy(alpha = 0.07f)
                     else scheme.primary.copy(alpha = 0.08f),
                 )
-                .clickable { expanded = true }
-                .padding(start = 8.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                .then(
+                    if (hasMultipleCountries) Modifier.clickable { expanded = true }
+                    else Modifier
+                )
+                .padding(
+                    start = 8.dp,
+                    end = if (hasMultipleCountries) 4.dp else 8.dp,
+                    top = 4.dp,
+                    bottom = 4.dp,
+                ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
@@ -1317,60 +1379,64 @@ private fun LightweightCountryCodeSelector(
                 ),
                 color = scheme.onBackground,
             )
-            Icon(
-                imageVector = Icons.Default.ArrowDropDown,
-                contentDescription = "Select country code",
-                tint = scheme.onSurfaceVariant,
-                modifier = Modifier.size(18.dp),
-            )
+            if (hasMultipleCountries) {
+                Icon(
+                    imageVector = Icons.Default.ArrowDropDown,
+                    contentDescription = "Select country code",
+                    tint = scheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
         }
 
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-            modifier = Modifier
-                .heightIn(max = 260.dp)
-                .background(if (dark) Color(0xFF0F172A) else Color.White),
-        ) {
-            LIGHTWEIGHT_COUNTRY_CODES.forEach { country ->
-                val isSelected = country.iso == selectedCountry.iso
-                DropdownMenuItem(
-                    text = {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                text = "${country.flag}  ${country.name}",
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                ),
-                                color = if (isSelected) {
-                                    if (dark) scheme.secondary else scheme.primary
-                                } else {
-                                    scheme.onSurface
-                                },
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Text(
-                                text = country.dialCode,
-                                style = MaterialTheme.typography.labelMedium.copy(
-                                    fontWeight = FontWeight.SemiBold,
-                                ),
-                                color = if (isSelected) {
-                                    if (dark) scheme.secondary else scheme.primary
-                                } else {
-                                    scheme.onSurfaceVariant
-                                },
-                            )
-                        }
-                    },
-                    onClick = {
-                        onCountrySelected(country)
-                        expanded = false
-                    },
-                )
+        if (hasMultipleCountries) {
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+                modifier = Modifier
+                    .heightIn(max = 260.dp)
+                    .background(if (dark) Color(0xFF0F172A) else Color.White),
+            ) {
+                LIGHTWEIGHT_COUNTRY_CODES.forEach { country ->
+                    val isSelected = country.iso == selectedCountry.iso
+                    DropdownMenuItem(
+                        text = {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = "${country.flag}  ${country.name}",
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    ),
+                                    color = if (isSelected) {
+                                        if (dark) scheme.secondary else scheme.primary
+                                    } else {
+                                        scheme.onSurface
+                                    },
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text(
+                                    text = country.dialCode,
+                                    style = MaterialTheme.typography.labelMedium.copy(
+                                        fontWeight = FontWeight.SemiBold,
+                                    ),
+                                    color = if (isSelected) {
+                                        if (dark) scheme.secondary else scheme.primary
+                                    } else {
+                                        scheme.onSurfaceVariant
+                                    },
+                                )
+                            }
+                        },
+                        onClick = {
+                            onCountrySelected(country)
+                            expanded = false
+                        },
+                    )
+                }
             }
         }
     }
@@ -1384,6 +1450,7 @@ private fun LiquidCapsuleInput(
     placeholder: String,
     icon: ImageVector,
     leadingAccessory: (@Composable () -> Unit)? = null,
+    trailingAccessory: (@Composable () -> Unit)? = null,
     errorMessage: String? = null,
     isPassword: Boolean = false,
     keyboardType: KeyboardType = KeyboardType.Text,
@@ -1542,6 +1609,10 @@ private fun LiquidCapsuleInput(
                         innerTextField()
                     },
                 )
+
+                if (trailingAccessory != null) {
+                    trailingAccessory()
+                }
 
                 if (isPassword && value.isNotEmpty()) {
                     Text(

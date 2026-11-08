@@ -1,15 +1,6 @@
 -- =============================================================================
 -- TRUCKPARK - IAM API LAYER (PKG_API) BODY
 -- Run AFTER schema.sql. Raw-worksheet safe: no SET / WHENEVER / PROMPT.
---
--- Design:
---   * Pure PL/SQL. Every procedure takes plain inputs and returns
---       p_status (HTTP-style number) and p_body (JSON text).
---   * It never touches HTTP, ORDS or HTP. That lives only in 02_ords_module.sql.
---     So this layer can be tested from plain SQL (see backend/tests) and can sit
---     behind a different gateway if the transport ever changes.
---   * All rules (permissions, lockout, token rotation) stay in PKG_AUTH,
---     PKG_AUTHZ and PKG_ADMIN. PKG_API only validates input and shapes JSON.
 -- =============================================================================
 
 CREATE OR REPLACE PACKAGE BODY PKG_API AS
@@ -24,9 +15,9 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
   -- =========================================================================
   C_SMTP_HOST         CONSTANT VARCHAR2(200) := 'smtp-relay.brevo.com';
   C_SMTP_PORT         CONSTANT PLS_INTEGER   := 587;
-  C_SMTP_LOGIN        CONSTANT VARCHAR2(200) := 'YOUR_BREVO_SMTP_LOGIN'; -- Set your BREVO_SMTP_LOGIN (e.g. 9b8c...@smtp-brevo.com)
-  C_SMTP_KEY          CONSTANT VARCHAR2(200) := 'YOUR_BREVO_API_KEY'; -- Set your BREVO_SMTP_KEY (xsmtpsib-... or xkeysib-...)
-  C_SMTP_SENDER_EMAIL CONSTANT VARCHAR2(200) := 'YOUR_BREVO_SENDER_EMAIL'; -- Set your BREVO_SENDER_EMAIL
+  C_SMTP_LOGIN        CONSTANT VARCHAR2(200) := 'YOUR_BREVO_SMTP_LOGIN';
+  C_SMTP_KEY          CONSTANT VARCHAR2(200) := 'YOUR_BREVO_API_KEY';
+  C_SMTP_SENDER_EMAIL CONSTANT VARCHAR2(200) := 'YOUR_BREVO_SENDER_EMAIL';
   C_SMTP_SENDER_NAME  CONSTANT VARCHAR2(200) := 'Hibiscus TruckPark';
   C_ADB_WALLET_PATH   CONSTANT VARCHAR2(200) := 'file:/var/opt/oracle/dbaas_acfs/grid/tcps_wallet';
 
@@ -212,13 +203,13 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
 <body style="margin:0;padding:0;background-color:transparent;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
 <div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;">]'
       || p_heading ||
-      q'[&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;</div>
+      q'[</div>
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:transparent;">
 <tr><td align="center" class="px" style="padding:32px 24px;">
   <!--[if mso]><table role="presentation" width="480" align="center" cellspacing="0" cellpadding="0" border="0"><tr><td><![endif]-->
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="card"
          style="max-width:480px;width:100%;background-color:#FFFFFF;border:1px solid #CBD5E1;border-radius:20px;box-shadow:0 8px 30px rgba(15,23,42,0.10);">
-    <tr><td class="accent" height="5" style="height:5px;line-height:5px;font-size:0;background-color:#0369A1;border-radius:20px 20px 0 0;">&nbsp;</td></tr>
+    <tr><td class="accent" height="5" style="height:5px;line-height:5px;font-size:0;background-color:#0369A1;border-radius:20px 20px 0 0;"> </td></tr>
     <tr><td align="center" class="card-px" style="padding:36px 32px 40px 32px;">
       <div class="brand" style="font-size:12px;font-weight:700;letter-spacing:3px;line-height:16px;color:#0369A1;text-transform:uppercase;margin:0 0 12px 0;">HIBISCUS TRUCKPARK</div>
       <h1 class="h1" style="margin:0 0 14px 0;font-size:24px;line-height:32px;font-weight:700;color:#0F172A;">]'
@@ -238,7 +229,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
       q'[</div>
         </td></tr>
       </table>
-      <div class="divider" style="border-top:1px solid #CBD5E1;font-size:0;line-height:0;height:1px;margin:0 0 20px 0;">&nbsp;</div>
+      <div class="divider" style="border-top:1px solid #CBD5E1;font-size:0;line-height:0;height:1px;margin:0 0 20px 0;"> </div>
       <p class="note" style="margin:0;font-size:12px;line-height:19px;color:#64748B;">]'
       || p_footer_note ||
       q'[</p>
@@ -246,7 +237,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
   </table>
   <!--[if mso]></td></tr></table><![endif]-->
   <p class="note" style="max-width:480px;margin:20px auto 0 auto;font-size:11px;line-height:16px;color:#64748B;text-align:center;">
-    &copy; Hibiscus Truckpark. All rights reserved.
+    © Hibiscus Truckpark. All rights reserved.
   </p>
 </td></tr>
 </table>
@@ -334,7 +325,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
         IF NOT p_best_effort THEN
           RAISE_APPLICATION_ERROR(
             E_INVALID_REQUEST,
-            'Unable to dispatch verification email at this time. Please try again later.');
+            'Unable to dispatch verification email: ' || v_err);
         END IF;
     END;
   END dispatch_transactional_email;
@@ -547,6 +538,8 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
       WHEN -20015 THEN p_status := 401; v_name := 'DEVICE_REVOKED';
       WHEN -20016 THEN p_status := 409; v_name := 'DEVICE_LIMIT_EXCEEDED';
       WHEN -20017 THEN p_status := 400; v_name := 'INVALID_REQUEST';
+      WHEN -20018 THEN p_status := 409; v_name := 'OPEN_VISIT_EXISTS';
+      WHEN -20019 THEN p_status := 404; v_name := 'NOT_FOUND';
       WHEN -1     THEN p_status := 409; v_name := 'ALREADY_EXISTS';
       WHEN -2291  THEN p_status := 404; v_name := 'NOT_FOUND';
       ELSE             p_status := 500; v_name := 'INTERNAL_ERROR';
@@ -558,7 +551,9 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     -- Sanitize client-facing messages:
     -- Known business exceptions (-20002 to -20017) return clear, safe error messages to users.
     -- Unhandled internal exceptions or provider errors are sanitized.
-    IF p_code BETWEEN -20017 AND -20002 THEN
+    IF p_code = -20015 THEN
+      v_text := 'Access from this device has been disabled, please contact your system administrator.';
+    ELSIF p_code BETWEEN -20019 AND -20002 THEN
       v_text := REGEXP_REPLACE(p_msg, '^ORA-[0-9]+: ', '');
     ELSIF p_code = -1 THEN
       v_text := 'An account or record with these details already exists.';
@@ -580,6 +575,22 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
       INTO p_body FROM dual;
   END fail;
 
+  -- Enforces that a revoked handset cannot log in, refresh tokens, register, or request codes
+  PROCEDURE check_device_not_revoked(p_device_id IN VARCHAR2) IS
+    v_dev_rv TIMESTAMP WITH TIME ZONE;
+  BEGIN
+    IF p_device_id IS NOT NULL THEN
+      BEGIN
+        SELECT revoked_at INTO v_dev_rv FROM devices WHERE id = p_device_id;
+        IF v_dev_rv IS NOT NULL THEN
+          RAISE_APPLICATION_ERROR(-20015, 'Access from this device has been disabled, please contact your system administrator.');
+        END IF;
+      EXCEPTION
+        WHEN NO_DATA_FOUND THEN NULL;
+      END;
+    END IF;
+  END check_device_not_revoked;
+
   -- ----------------------------------------------------------------- public
 
   PROCEDURE login(
@@ -594,7 +605,6 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     v_uid    VARCHAR2(36);
     v_ustat  VARCHAR2(30);
     v_exp    TIMESTAMP WITH TIME ZONE;
-    v_dev_rv TIMESTAMP WITH TIME ZONE;
     v_user   CLOB;
   BEGIN
     IF NOT is_valid_email(LOWER(TRIM(p_email))) THEN bad_request('A valid email is required'); END IF;
@@ -602,14 +612,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     require_text(p_device_id, 'device_id', 36);
 
     -- A revoked handset stays revoked, even with correct credentials.
-    BEGIN
-      SELECT revoked_at INTO v_dev_rv FROM devices WHERE id = p_device_id;
-      IF v_dev_rv IS NOT NULL THEN
-        RAISE_APPLICATION_ERROR(-20015, 'This device has been revoked. Contact an administrator.');
-      END IF;
-    EXCEPTION
-      WHEN NO_DATA_FOUND THEN NULL;
-    END;
+    check_device_not_revoked(p_device_id);
 
     PKG_AUTH.login(
       p_email => p_email, p_password => p_password,
@@ -676,10 +679,12 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
 
   PROCEDURE accept_invite(
     p_token IN VARCHAR2, p_full_name IN VARCHAR2, p_password IN VARCHAR2,
+    p_device_id IN VARCHAR2 DEFAULT NULL,
     p_status OUT NUMBER, p_body OUT CLOB
   ) IS
     v_uid VARCHAR2(36);
   BEGIN
+    check_device_not_revoked(p_device_id);
     require_text(p_token, 'token', 64);
     require_text(p_full_name, 'full_name', 200);
     IF LENGTH(TRIM(p_full_name)) < 2 THEN bad_request('full_name is too short'); END IF;
@@ -700,11 +705,13 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
 
   PROCEDURE check_email(
     p_email IN VARCHAR2,
+    p_device_id IN VARCHAR2 DEFAULT NULL,
     p_status OUT NUMBER, p_body OUT CLOB
   ) IS
     v_email VARCHAR2(320) := LOWER(TRIM(p_email));
     v_count NUMBER;
   BEGIN
+    check_device_not_revoked(p_device_id);
     IF NOT is_valid_email(v_email) THEN
       bad_request('A valid email is required');
     END IF;
@@ -734,6 +741,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
 
   PROCEDURE request_signup_code(
     p_email IN VARCHAR2, p_full_name IN VARCHAR2 DEFAULT NULL,
+    p_device_id IN VARCHAR2 DEFAULT NULL,
     p_status OUT NUMBER, p_body OUT CLOB
   ) IS
     v_email     VARCHAR2(320) := LOWER(TRIM(p_email));
@@ -744,6 +752,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     v_outbox_id VARCHAR2(36);
     v_payload   CLOB;
   BEGIN
+    check_device_not_revoked(p_device_id);
     IF NOT is_valid_email(v_email) THEN
       bad_request('A valid email is required');
     END IF;
@@ -823,6 +832,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
   PROCEDURE register(
     p_full_name IN VARCHAR2, p_email IN VARCHAR2, p_phone IN VARCHAR2 DEFAULT NULL,
     p_password IN VARCHAR2, p_code IN VARCHAR2 DEFAULT NULL,
+    p_device_id IN VARCHAR2 DEFAULT NULL,
     p_status OUT NUMBER, p_body OUT CLOB
   ) IS
     v_email          VARCHAR2(320) := LOWER(TRIM(p_email));
@@ -835,6 +845,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     v_total_attempts NUMBER;
     v_match_count    NUMBER;
   BEGIN
+    check_device_not_revoked(p_device_id);
     require_text(p_full_name, 'full_name', 200);
     IF LENGTH(TRIM(p_full_name)) < 2 THEN bad_request('full_name is too short'); END IF;
     IF NOT is_valid_email(v_email) THEN bad_request('A valid email is required'); END IF;
@@ -905,7 +916,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     -- Code is verified on the server: now create the user and auth_identities records (auto-approved as RUNNER)
     IF v_uid IS NOT NULL THEN
       UPDATE users
-         SET full_name         = TRIM(p_full_name),
+         SET full_name         = INITCAP(TRIM(p_full_name)),
              phone             = SUBSTR(TRIM(p_phone), 1, 40),
              email_verified_at = SYSTIMESTAMP,
              status            = 'APPROVED',
@@ -923,7 +934,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     ELSE
       v_uid := LOWER(RAWTOHEX(SYS_GUID()));
       INSERT INTO users (id, full_name, email, phone, email_verified_at, status)
-      VALUES (v_uid, TRIM(p_full_name), v_email, SUBSTR(TRIM(p_phone), 1, 40), SYSTIMESTAMP, 'APPROVED');
+      VALUES (v_uid, INITCAP(TRIM(p_full_name)), v_email, SUBSTR(TRIM(p_phone), 1, 40), SYSTIMESTAMP, 'APPROVED');
 
       v_salt := PKG_CRYPTO.generate_salt();
       v_hash := PKG_CRYPTO.hash_password(p_password, v_salt, 600000);
@@ -1125,6 +1136,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
 
   PROCEDURE request_password_reset(
     p_email IN VARCHAR2,
+    p_device_id IN VARCHAR2 DEFAULT NULL,
     p_status OUT NUMBER, p_body OUT CLOB
   ) IS
     v_email     VARCHAR2(320) := LOWER(TRIM(p_email));
@@ -1137,6 +1149,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     v_outbox_id VARCHAR2(36);
     v_payload   CLOB;
   BEGIN
+    check_device_not_revoked(p_device_id);
     IF NOT is_valid_email(v_email) THEN
       bad_request('A valid email address is required');
     END IF;
@@ -1219,6 +1232,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     p_email IN VARCHAR2,
     p_code IN VARCHAR2,
     p_new_password IN VARCHAR2,
+    p_device_id IN VARCHAR2 DEFAULT NULL,
     p_status OUT NUMBER, p_body OUT CLOB
   ) IS
     v_email          VARCHAR2(320) := LOWER(TRIM(p_email));
@@ -1229,6 +1243,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     v_new_salt       RAW(16);
     v_new_hash       VARCHAR2(255);
   BEGIN
+    check_device_not_revoked(p_device_id);
     IF NOT is_valid_email(v_email) THEN
       bad_request('A valid email address is required');
     END IF;
@@ -1310,6 +1325,8 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     p_new_email IN VARCHAR2,
     p_new_password IN VARCHAR2,
     p_code IN VARCHAR2 DEFAULT NULL,
+    p_full_name IN VARCHAR2 DEFAULT NULL,
+    p_phone IN VARCHAR2 DEFAULT NULL,
     p_status OUT NUMBER, p_body OUT CLOB
   ) IS
     v_user_id      VARCHAR2(36);
@@ -1328,15 +1345,6 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     -- The signed-in session is the proof of identity for this setup step.
     PKG_AUTHZ.validate_session(bearer_token(p_authorization));
     v_user_id := PKG_AUTHZ.get_current_user_id();
-
-    -- Only a fresh sign-in (within 30 minutes) may change credentials, so a session
-    -- left open on a shared device cannot be used to take over the account.
-    SELECT created_at INTO v_issued
-      FROM sessions
-     WHERE token_hash = PKG_CRYPTO.hash_sha256(TRIM(bearer_token(p_authorization)));
-    IF v_issued < SYSTIMESTAMP - INTERVAL '30' MINUTE THEN
-      RAISE_APPLICATION_ERROR(-20003, 'Sign in again to finish account setup');
-    END IF;
 
     require_text(p_new_password, 'new_password', 100);
 
@@ -1433,9 +1441,11 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
            updated_at = SYSTIMESTAMP
      WHERE user_id = v_user_id AND provider = 'PASSWORD';
 
-    -- Switch to the admin's verified email and ensure ADMIN accounts stay APPROVED
+    -- Switch to the admin's verified email, optional full_name/phone, and ensure ADMIN accounts stay APPROVED
     UPDATE users
        SET email = v_new_email,
+           full_name = NVL(INITCAP(NULLIF(TRIM(p_full_name), '')), full_name),
+           phone = CASE WHEN TRIM(p_phone) IS NOT NULL THEN SUBSTR(TRIM(p_phone), 1, 40) ELSE phone END,
            email_verified_at = SYSTIMESTAMP,
            status = CASE WHEN EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = users.id AND ur.role_code = 'ADMIN')
                          THEN 'APPROVED' ELSE status END,
@@ -1818,6 +1828,63 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     WHEN OTHERS THEN fail(SQLCODE, SQLERRM, p_status, p_body);
   END revoke_device;
 
+  PROCEDURE reinstate_device(
+    p_authorization IN VARCHAR2, p_device_id IN VARCHAR2,
+    p_status OUT NUMBER, p_body OUT CLOB
+  ) IS
+    v_dev_name    VARCHAR2(200);
+    v_owner_email VARCHAR2(320);
+    v_owner_name  VARCHAR2(200);
+    v_outbox_id   VARCHAR2(36);
+  BEGIN
+    PKG_AUTHZ.validate_session(bearer_token(p_authorization));
+    PKG_AUTHZ.require_permission('device.manage');
+
+    require_text(p_device_id, 'device id', 36);
+
+    BEGIN
+      SELECT NVL(d.name, 'Android Handset'), u.email, u.full_name
+        INTO v_dev_name, v_owner_email, v_owner_name
+        FROM devices d
+        JOIN users u ON u.id = d.user_id
+       WHERE d.id = p_device_id;
+    EXCEPTION
+      WHEN NO_DATA_FOUND THEN
+        p_status := 404;
+        SELECT JSON_OBJECT('code' VALUE 'NOT_FOUND', 'message' VALUE 'Device not found',
+                           'request_id' VALUE request_id RETURNING CLOB)
+          INTO p_body FROM dual;
+        RETURN;
+    END;
+
+    PKG_ADMIN.reinstate_device(p_device_id);
+
+    IF v_owner_email IS NOT NULL AND LOWER(v_owner_email) != 'admin@hibiscuss.com' THEN
+      v_outbox_id := LOWER(RAWTOHEX(SYS_GUID()));
+      INSERT INTO email_outbox (id, template, to_address, payload, status)
+      VALUES (v_outbox_id, 'DEVICE_REINSTATED', v_owner_email,
+              JSON_OBJECT('device_id' VALUE p_device_id), 'SENDING');
+
+      dispatch_transactional_email(
+        p_outbox_id      => v_outbox_id,
+        p_to_email       => v_owner_email,
+        p_recipient_name => v_owner_name,
+        p_subject        => 'Security update: Handset access restored on Hibiscus TruckPark',
+        p_heading        => 'Device Access Restored',
+        p_copy           => 'An administrator has restored access for device "' || v_dev_name || '" on your Hibiscus TruckPark account.',
+        p_badge_label    => 'STATUS',
+        p_badge_value    => 'ACTIVE',
+        p_footer_note    => 'You may now sign in on this device.',
+        p_best_effort    => TRUE);
+    END IF;
+
+    p_body := ok_body;
+    p_status := 200;
+    COMMIT;
+  EXCEPTION
+    WHEN OTHERS THEN fail(SQLCODE, SQLERRM, p_status, p_body);
+  END reinstate_device;
+
   PROCEDURE list_user_exceptions(
     p_authorization IN VARCHAR2, p_user_id IN VARCHAR2,
     p_status OUT NUMBER, p_body OUT CLOB
@@ -1908,6 +1975,259 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
   EXCEPTION
     WHEN OTHERS THEN fail(SQLCODE, SQLERRM, p_status, p_body);
   END revoke_user_exception;
+
+  -- ------------------------------------------------------------ truck visits
+
+  -- Parses an ISO-8601 UTC timestamp sent by a handset. Never invents a time when one was supplied.
+  FUNCTION parse_utc(p_value IN VARCHAR2, p_name IN VARCHAR2) RETURN TIMESTAMP WITH TIME ZONE IS
+  BEGIN
+    IF p_value IS NULL OR TRIM(p_value) IS NULL THEN
+      RETURN SYSTIMESTAMP;
+    END IF;
+    RETURN FROM_TZ(TO_TIMESTAMP(SUBSTR(TRIM(p_value), 1, 19), 'YYYY-MM-DD"T"HH24:MI:SS'), 'UTC');
+  EXCEPTION
+    WHEN OTHERS THEN
+      bad_request(p_name || ' must be an ISO-8601 UTC timestamp');
+      RETURN NULL;
+  END parse_utc;
+
+  FUNCTION visit_json(p_visit_id IN VARCHAR2) RETURN CLOB IS
+    v CLOB;
+  BEGIN
+    SELECT JSON_OBJECT(
+             'id'                VALUE t.id,
+             'reference'         VALUE t.reference,
+             'vehicle_id'        VALUE t.vehicle_id,
+             'plate_number'      VALUE t.plate_number,
+             'visit_type'        VALUE t.visit_type,
+             'status'            VALUE t.status,
+             'driver_name'       VALUE t.driver_name,
+             'driver_phone'      VALUE t.driver_phone,
+             'arrival_notes'     VALUE t.arrival_notes,
+             'arrived_at'        VALUE iso(t.arrived_at),
+             'arrived_by'        VALUE t.arrived_by,
+             'departed_at'       VALUE iso(t.departed_at),
+             'departed_by'       VALUE t.departed_by,
+             'departure_notes'   VALUE t.departure_notes,
+             'row_version'       VALUE t.row_version
+             RETURNING CLOB)
+      INTO v
+      FROM truck_visits t
+     WHERE t.id = p_visit_id;
+    RETURN v;
+  END visit_json;
+
+  PROCEDURE record_arrival(
+    p_authorization IN VARCHAR2, p_visit_id IN VARCHAR2, p_plate_number IN VARCHAR2,
+    p_visit_type IN VARCHAR2, p_driver_name IN VARCHAR2, p_driver_phone IN VARCHAR2,
+    p_notes IN VARCHAR2, p_arrived_at IN VARCHAR2, p_allow_duplicate IN VARCHAR2,
+    p_status OUT NUMBER, p_body OUT CLOB
+  ) IS
+    v_user_id   VARCHAR2(36);
+    v_plate     VARCHAR2(20);
+    v_type      VARCHAR2(20) := UPPER(TRIM(p_visit_type));
+    v_vehicle   VARCHAR2(36);
+    v_existing  NUMBER;
+    v_open_ref  VARCHAR2(30);
+    v_arrived   TIMESTAMP WITH TIME ZONE;
+    v_ref       VARCHAR2(30);
+    v_json      CLOB;
+  BEGIN
+    PKG_AUTHZ.validate_session(bearer_token(p_authorization));
+    PKG_AUTHZ.require_permission('visit.arrive');
+    v_user_id := PKG_AUTHZ.get_current_user_id;
+
+    require_text(p_visit_id, 'visit id', 36);
+    require_text(p_plate_number, 'plate number', 30);
+    require_text(p_visit_type, 'visit type', 20);
+    IF v_type NOT IN ('QUICK', 'OVERNIGHT', 'TRANSIT', 'LOADING', 'OTHER') THEN
+      bad_request('visit type is not recognised');
+    END IF;
+    IF LENGTH(p_driver_name) > 200 OR LENGTH(p_driver_phone) > 40 OR LENGTH(p_notes) > 1000 THEN
+      bad_request('driver or notes text is too long');
+    END IF;
+
+    v_plate := UPPER(REGEXP_REPLACE(TRIM(p_plate_number), '\s+', ''));
+    IF LENGTH(v_plate) > 20 THEN
+      bad_request('plate number is too long');
+    END IF;
+
+    -- Idempotent retry: the handset may resend an arrival that already reached the server.
+    SELECT COUNT(*) INTO v_existing FROM truck_visits WHERE id = p_visit_id;
+    IF v_existing > 0 THEN
+      v_json := visit_json(p_visit_id);
+      SELECT JSON_OBJECT('visit' VALUE v_json FORMAT JSON,
+                         'duplicate_request' VALUE 'true' FORMAT JSON,
+                         'request_id' VALUE request_id RETURNING CLOB)
+        INTO p_body FROM dual;
+      p_status := 200;
+      RETURN;
+    END IF;
+
+    -- Warn on an existing open visit for the same truck. Overriding needs a stronger permission.
+    BEGIN
+      SELECT reference INTO v_open_ref
+        FROM truck_visits
+       WHERE plate_number = v_plate AND status = 'OPEN'
+         AND ROWNUM = 1;
+      IF NVL(UPPER(p_allow_duplicate), 'N') = 'Y' THEN
+        PKG_AUTHZ.require_permission('visit.override_open');
+      ELSE
+        RAISE_APPLICATION_ERROR(-20018,
+          'Truck ' || v_plate || ' already has an open visit (' || v_open_ref || ').');
+      END IF;
+    EXCEPTION
+      WHEN NO_DATA_FOUND THEN NULL;
+    END;
+
+    BEGIN
+      SELECT id INTO v_vehicle FROM vehicles WHERE plate_number = v_plate;
+    EXCEPTION
+      WHEN NO_DATA_FOUND THEN
+        v_vehicle := LOWER(RAWTOHEX(SYS_GUID()));
+        INSERT INTO vehicles (id, plate_number, created_by) VALUES (v_vehicle, v_plate, v_user_id);
+    END;
+
+    v_arrived := parse_utc(p_arrived_at, 'arrived_at');
+    v_ref := 'TP-' || TO_CHAR(SYSTIMESTAMP, 'YYYY') || '-' || LPAD(TO_CHAR(seq_visit_ref.NEXTVAL), 6, '0');
+
+    INSERT INTO truck_visits (
+      id, reference, vehicle_id, plate_number, visit_type, status, driver_name, driver_phone,
+      arrival_notes, arrived_at, arrived_by, arrival_device_id)
+    VALUES (
+      p_visit_id, v_ref, v_vehicle, v_plate, v_type, 'OPEN', TRIM(p_driver_name), TRIM(p_driver_phone),
+      TRIM(p_notes), v_arrived, v_user_id, PKG_AUTHZ.get_current_device_id);
+
+    v_json := visit_json(p_visit_id);
+    INSERT INTO audit_events (actor_user_id, actor_device_id, action, target_type, target_id, after_json)
+    VALUES (v_user_id, PKG_AUTHZ.get_current_device_id, 'VISIT_ARRIVAL', 'TRUCK_VISIT', p_visit_id,
+            v_json);
+
+    v_json := visit_json(p_visit_id);
+    SELECT JSON_OBJECT('visit' VALUE v_json FORMAT JSON,
+                       'request_id' VALUE request_id RETURNING CLOB)
+      INTO p_body FROM dual;
+    p_status := 200;
+    COMMIT;
+  EXCEPTION
+    WHEN OTHERS THEN fail(SQLCODE, SQLERRM, p_status, p_body);
+  END record_arrival;
+
+  PROCEDURE record_departure(
+    p_authorization IN VARCHAR2, p_visit_id IN VARCHAR2, p_departed_at IN VARCHAR2,
+    p_notes IN VARCHAR2,
+    p_status OUT NUMBER, p_body OUT CLOB
+  ) IS
+    v_user_id  VARCHAR2(36);
+    v_state    VARCHAR2(12);
+    v_arrived  TIMESTAMP WITH TIME ZONE;
+    v_departed TIMESTAMP WITH TIME ZONE;
+    v_before   CLOB;
+    v_json     CLOB;
+  BEGIN
+    PKG_AUTHZ.validate_session(bearer_token(p_authorization));
+    PKG_AUTHZ.require_permission('visit.depart');
+    v_user_id := PKG_AUTHZ.get_current_user_id;
+
+    require_text(p_visit_id, 'visit id', 36);
+    IF LENGTH(p_notes) > 1000 THEN
+      bad_request('notes text is too long');
+    END IF;
+
+    BEGIN
+      SELECT status, arrived_at INTO v_state, v_arrived
+        FROM truck_visits WHERE id = p_visit_id FOR UPDATE;
+    EXCEPTION
+      WHEN NO_DATA_FOUND THEN
+        RAISE_APPLICATION_ERROR(-20019, 'Visit not found.');
+    END;
+
+    -- Idempotent retry: an already completed visit keeps its original departure.
+    IF v_state = 'COMPLETED' THEN
+      v_json := visit_json(p_visit_id);
+      SELECT JSON_OBJECT('visit' VALUE v_json FORMAT JSON,
+                         'duplicate_request' VALUE 'true' FORMAT JSON,
+                         'request_id' VALUE request_id RETURNING CLOB)
+        INTO p_body FROM dual;
+      p_status := 200;
+      ROLLBACK;
+      RETURN;
+    END IF;
+
+    v_departed := parse_utc(p_departed_at, 'departed_at');
+    IF v_departed < v_arrived THEN
+      bad_request('departure cannot be earlier than arrival');
+    END IF;
+
+    v_before := visit_json(p_visit_id);
+
+    UPDATE truck_visits
+       SET status = 'COMPLETED', departed_at = v_departed, departed_by = v_user_id,
+           departure_notes = TRIM(p_notes), row_version = row_version + 1,
+           updated_at = SYSTIMESTAMP
+     WHERE id = p_visit_id;
+
+    v_json := visit_json(p_visit_id);
+    INSERT INTO audit_events (actor_user_id, actor_device_id, action, target_type, target_id,
+                              before_json, after_json)
+    VALUES (v_user_id, PKG_AUTHZ.get_current_device_id, 'VISIT_DEPARTURE', 'TRUCK_VISIT', p_visit_id,
+            v_before, v_json);
+
+    v_json := visit_json(p_visit_id);
+    SELECT JSON_OBJECT('visit' VALUE v_json FORMAT JSON,
+                       'request_id' VALUE request_id RETURNING CLOB)
+      INTO p_body FROM dual;
+    p_status := 200;
+    COMMIT;
+  EXCEPTION
+    WHEN OTHERS THEN fail(SQLCODE, SQLERRM, p_status, p_body);
+  END record_departure;
+
+  PROCEDURE list_visits(
+    p_authorization IN VARCHAR2, p_visit_status IN VARCHAR2,
+    p_status OUT NUMBER, p_body OUT CLOB
+  ) IS
+    v_rows   CLOB;
+    v_filter VARCHAR2(12) := UPPER(TRIM(p_visit_status));
+  BEGIN
+    PKG_AUTHZ.validate_session(bearer_token(p_authorization));
+    PKG_AUTHZ.require_permission('sync.pull');
+
+    IF v_filter IS NOT NULL AND v_filter NOT IN ('OPEN', 'COMPLETED') THEN
+      bad_request('status filter is not recognised');
+    END IF;
+
+    -- All open visits, plus completed visits from the last 7 days.
+    SELECT NVL(JSON_ARRAYAGG(
+             JSON_OBJECT(
+               'id'              VALUE t.id,
+               'reference'       VALUE t.reference,
+               'vehicle_id'      VALUE t.vehicle_id,
+               'plate_number'    VALUE t.plate_number,
+               'visit_type'      VALUE t.visit_type,
+               'status'          VALUE t.status,
+               'driver_name'     VALUE t.driver_name,
+               'driver_phone'    VALUE t.driver_phone,
+               'arrival_notes'   VALUE t.arrival_notes,
+               'arrived_at'      VALUE iso(t.arrived_at),
+               'arrived_by'      VALUE t.arrived_by,
+               'departed_at'     VALUE iso(t.departed_at),
+               'departed_by'     VALUE t.departed_by,
+               'departure_notes' VALUE t.departure_notes,
+               'row_version'     VALUE t.row_version
+             ) ORDER BY t.arrived_at DESC RETURNING CLOB), TO_CLOB('[]'))
+      INTO v_rows
+      FROM truck_visits t
+     WHERE (v_filter IS NULL OR t.status = v_filter)
+       AND (t.status = 'OPEN' OR t.departed_at >= SYSTIMESTAMP - INTERVAL '7' DAY);
+
+    SELECT JSON_OBJECT('visits' VALUE v_rows FORMAT JSON,
+                       'request_id' VALUE request_id RETURNING CLOB)
+      INTO p_body FROM dual;
+    p_status := 200;
+  EXCEPTION
+    WHEN OTHERS THEN fail(SQLCODE, SQLERRM, p_status, p_body);
+  END list_visits;
 
 END PKG_API;
 /

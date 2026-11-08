@@ -74,9 +74,21 @@ class OrdsAuthRemoteDataSource(
         bearer = sessionToken,
     ) { json -> parseUser(json) }
 
-    override suspend fun acceptInvite(token: String, fullName: String, password: String): AuthResult<String> = call(
+    override suspend fun acceptInvite(token: String, fullName: String, password: String): AuthResult<String> =
+        acceptInvite(token, fullName, password, null)
+
+    override suspend fun acceptInvite(
+        token: String,
+        fullName: String,
+        password: String,
+        deviceId: String?,
+    ): AuthResult<String> = call(
         path = "auth/accept-invite",
-        body = JSONObject().put("token", token).put("full_name", fullName).put("password", password),
+        body = JSONObject()
+            .put("token", token)
+            .put("full_name", fullName)
+            .put("password", password)
+            .apply { if (!deviceId.isNullOrBlank()) put("device_id", deviceId) },
     ) { json -> json.getString("user_id") }
 
     override suspend fun verifyEmail(userId: String, code: String, sessionToken: String?): AuthResult<Unit> = call(
@@ -96,10 +108,15 @@ class OrdsAuthRemoteDataSource(
         bearer = sessionToken,
     ) { }
 
-    override suspend fun checkEmailAvailable(email: String): AuthResult<Unit> {
+    override suspend fun checkEmailAvailable(email: String): AuthResult<Unit> =
+        checkEmailAvailable(email, null)
+
+    override suspend fun checkEmailAvailable(email: String, deviceId: String?): AuthResult<Unit> {
         val result = call(
             path = "auth/check-email",
-            body = JSONObject().put("email", email.trim().lowercase()),
+            body = JSONObject()
+                .put("email", email.trim().lowercase())
+                .apply { if (!deviceId.isNullOrBlank()) put("device_id", deviceId) },
         ) { }
         if (result is AuthResult.Failure && result.error.httpStatus == 404) {
             return AuthResult.Success(Unit)
@@ -107,11 +124,15 @@ class OrdsAuthRemoteDataSource(
         return result
     }
 
-    override suspend fun requestSignUpCode(email: String, fullName: String): AuthResult<Unit> = call(
+    override suspend fun requestSignUpCode(email: String, fullName: String): AuthResult<Unit> =
+        requestSignUpCode(email, fullName, null)
+
+    override suspend fun requestSignUpCode(email: String, fullName: String, deviceId: String?): AuthResult<Unit> = call(
         path = "auth/request-signup-code",
         body = JSONObject()
             .put("email", email.trim().lowercase())
-            .put("full_name", fullName.trim()),
+            .put("full_name", fullName.trim())
+            .apply { if (!deviceId.isNullOrBlank()) put("device_id", deviceId) },
     ) { }
 
     override suspend fun register(
@@ -120,6 +141,15 @@ class OrdsAuthRemoteDataSource(
         phone: String,
         password: String,
         code: String,
+    ): AuthResult<String> = register(fullName, email, phone, password, code, null)
+
+    override suspend fun register(
+        fullName: String,
+        email: String,
+        phone: String,
+        password: String,
+        code: String,
+        deviceId: String?,
     ): AuthResult<String> = call(
         path = "auth/register",
         body = JSONObject()
@@ -127,7 +157,8 @@ class OrdsAuthRemoteDataSource(
             .put("email", email)
             .put("phone", phone)
             .put("password", password)
-            .put("code", code),
+            .put("code", code)
+            .apply { if (!deviceId.isNullOrBlank()) put("device_id", deviceId) },
     ) { json -> json.optString("user_id", "") }
 
     override suspend fun changePassword(
@@ -141,6 +172,8 @@ class OrdsAuthRemoteDataSource(
         newEmail: String,
         newPassword: String,
         code: String?,
+        fullName: String?,
+        phone: String?,
     ): AuthResult<Unit> = call(
         path = "auth/change-password",
         body = JSONObject()
@@ -148,25 +181,40 @@ class OrdsAuthRemoteDataSource(
             .put("new_password", newPassword)
             .apply {
                 if (!code.isNullOrBlank()) put("code", code.trim())
+                if (!fullName.isNullOrBlank()) put("full_name", fullName.trim())
+                if (!phone.isNullOrBlank()) put("phone", phone.trim())
             },
         bearer = sessionToken,
     ) { }
 
-    override suspend fun requestPasswordReset(email: String): AuthResult<Unit> = call(
+    override suspend fun requestPasswordReset(email: String): AuthResult<Unit> =
+        requestPasswordReset(email, null)
+
+    override suspend fun requestPasswordReset(email: String, deviceId: String?): AuthResult<Unit> = call(
         path = "auth/request-password-reset",
-        body = JSONObject().put("email", email.trim().lowercase()),
+        body = JSONObject()
+            .put("email", email.trim().lowercase())
+            .apply { if (!deviceId.isNullOrBlank()) put("device_id", deviceId) },
     ) { }
 
     override suspend fun resetPassword(
         email: String,
         code: String,
         newPassword: String,
+    ): AuthResult<Unit> = resetPassword(email, code, newPassword, null)
+
+    override suspend fun resetPassword(
+        email: String,
+        code: String,
+        newPassword: String,
+        deviceId: String?,
     ): AuthResult<Unit> = call(
         path = "auth/reset-password",
         body = JSONObject()
             .put("email", email.trim().lowercase())
             .put("code", code.trim())
-            .put("new_password", newPassword),
+            .put("new_password", newPassword)
+            .apply { if (!deviceId.isNullOrBlank()) put("device_id", deviceId) },
     ) { }
 
     override suspend fun listUsers(sessionToken: String, status: String?): AuthResult<List<ManagedUser>> {
@@ -214,11 +262,11 @@ class OrdsAuthRemoteDataSource(
                 userId = obj.optString("user_id", ""),
                 userName = obj.optString("user_name", "Staff"),
                 userEmail = obj.optString("user_email", ""),
-                name = obj.optString("name", "Android Handset").ifBlank { "Android Handset" },
-                registeredAt = obj.optString("registered_at").ifBlank { null },
-                lastSeenAt = obj.optString("last_seen_at").ifBlank { null },
-                revokedAt = obj.optString("revoked_at").ifBlank { null },
-                revokeReason = obj.optString("revoke_reason").ifBlank { null },
+                name = obj.optString("name", "Android Handset").takeIf { !it.equals("null", ignoreCase = true) }?.ifBlank { "Android Handset" } ?: "Android Handset",
+                registeredAt = obj.optNullableString("registered_at"),
+                lastSeenAt = obj.optNullableString("last_seen_at"),
+                revokedAt = obj.optNullableString("revoked_at"),
+                revokeReason = obj.optNullableString("revoke_reason"),
                 isCurrentDevice = obj.optBoolean("is_current_device", false),
             )
         }
@@ -231,6 +279,15 @@ class OrdsAuthRemoteDataSource(
     ): AuthResult<Unit> = call(
         path = "admin/devices/${deviceId.trim()}/revoke",
         body = JSONObject().put("reason", reason.trim()),
+        bearer = sessionToken,
+    ) { }
+
+    override suspend fun reinstateDevice(
+        sessionToken: String,
+        deviceId: String,
+    ): AuthResult<Unit> = call(
+        path = "admin/devices/${deviceId.trim()}/reinstate",
+        body = JSONObject(),
         bearer = sessionToken,
     ) { }
 
@@ -324,9 +381,16 @@ class OrdsAuthRemoteDataSource(
     /** Reads the common error shape: { code, message, request_id }. Never trusts the body to be JSON. */
     private fun errorFrom(response: HttpResponse): AuthError {
         val json = try { JSONObject(response.body) } catch (e: JSONException) { null }
+        val rawCode = json?.optString("code").orEmpty().ifBlank { "HTTP_${response.status}" }
+        val rawMsg = json?.optString("message").orEmpty().ifBlank { "Request failed (${response.status})." }
+        val message = if (rawCode == AuthError.DEVICE_REVOKED) {
+            "Access from this device has been disabled, please contact your system administrator."
+        } else {
+            rawMsg
+        }
         return AuthError(
-            code = json?.optString("code").orEmpty().ifBlank { "HTTP_${response.status}" },
-            message = json?.optString("message").orEmpty().ifBlank { "Request failed (${response.status})." },
+            code = rawCode,
+            message = message,
             httpStatus = response.status,
             requestId = json?.optString("request_id")?.ifBlank { null },
         )
@@ -339,11 +403,18 @@ class OrdsAuthRemoteDataSource(
             id = json.getString("id"),
             fullName = json.getString("full_name"),
             email = json.getString("email"),
+            phone = json.optString("phone").takeIf { it.isNotBlank() },
             status = json.getString("status"),
             emailVerified = json.optBoolean("email_verified", false),
             roles = List(roles?.length() ?: 0) { roles!!.getString(it) },
             permissions = List(permissions?.length() ?: 0) { permissions!!.getString(it) }.toSet(),
             mustChangePassword = json.optBoolean("must_change_password", false),
         )
+    }
+
+    private fun JSONObject.optNullableString(key: String): String? {
+        if (isNull(key)) return null
+        val str = optString(key)
+        return if (str.isBlank() || str.equals("null", ignoreCase = true)) null else str
     }
 }

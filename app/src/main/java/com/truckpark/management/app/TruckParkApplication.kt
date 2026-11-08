@@ -6,14 +6,18 @@ import android.os.Build
 import com.truckpark.management.core.common.AppConfig
 import com.truckpark.management.data.local.KeystoreSessionStore
 import com.truckpark.management.data.local.PreferencesDeviceIdProvider
+import com.truckpark.management.data.local.db.TruckParkDatabase
 import com.truckpark.management.data.local.ThemePreferencesDataSource
 import com.truckpark.management.data.remote.HttpUrlConnectionTransport
 import com.truckpark.management.data.remote.auth.AuthRemoteDataSource
 import com.truckpark.management.data.remote.auth.OrdsAuthRemoteDataSource
+import com.truckpark.management.data.remote.visits.OrdsVisitsRemoteDataSource
 import com.truckpark.management.data.repositories.AuthRepositoryImpl
 import com.truckpark.management.data.repositories.ThemeRepositoryImpl
+import com.truckpark.management.data.repositories.VisitsRepositoryImpl
 import com.truckpark.management.domain.repositories.AuthRepository
 import com.truckpark.management.domain.repositories.ThemeRepository
+import com.truckpark.management.domain.repositories.VisitsRepository
 
 /** Minimal manual dependency container. Replace with Hilt/Koin if the graph grows. */
 class AppContainer(context: Context) {
@@ -29,6 +33,14 @@ class AppContainer(context: Context) {
         store = KeystoreSessionStore(context),
         devices = PreferencesDeviceIdProvider(context),
         deviceName = "${Build.MANUFACTURER} ${Build.MODEL}".trim().take(100),
+    )
+
+    private val database: TruckParkDatabase = TruckParkDatabase.create(context)
+
+    val visitsRepository: VisitsRepository = VisitsRepositoryImpl(
+        db = database,
+        remote = OrdsVisitsRemoteDataSource(AppConfig.apiBaseUrl, HttpUrlConnectionTransport()),
+        auth = authRepository,
     )
 }
 

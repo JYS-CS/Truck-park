@@ -34,6 +34,8 @@ data class StoredPendingSignUp(
 interface SessionStore {
     fun load(): AuthSession?
     fun save(session: AuthSession)
+    fun save(session: AuthSession, isNewLogin: Boolean) = save(session)
+    fun getSessionRemainingMillis(): Long? = null
     fun clear()
     fun markEmailVerified(email: String) {}
     fun unmarkEmailVerified(email: String) {}
@@ -57,15 +59,20 @@ class KeystoreSessionStore(context: Context) : SessionStore {
     override fun load(): AuthSession? {
         val stored = prefs.getString(KEY_BLOB, null) ?: return null
         return try {
-            val raw = Base64.decode(stored, Base64.NO_WRAP)
-            val iv = raw.copyOfRange(0, IV_BYTES)
-            val cipher = Cipher.getInstance(TRANSFORMATION)
-            cipher.init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(TAG_BITS, iv))
-            val json = JSONObject(String(cipher.doFinal(raw, IV_BYTES, raw.size - IV_BYTES), Charsets.UTF_8))
+            val json = decryptJson(stored)
+            val loginEpoch = json.optLong("l", 0L)
+            val nowSec = Instant.now().epochSecond
+            val timeoutSec = com.truckpark.management.core.common.AppConfig.SESSION_TIMEOUT_SECONDS
+            if (loginEpoch > 0L && (nowSec - loginEpoch) >= timeoutSec) {
+                // Session expired based on configured auto-logout duration
+                clear()
+                return null
+            }
             AuthSession(
                 sessionToken = json.getString("s"),
                 refreshToken = json.getString("r"),
                 expiresAt = Instant.ofEpochSecond(json.getLong("e")),
+                loginAt = if (loginEpoch > 0L) Instant.ofEpochSecond(loginEpoch) else Instant.now(),
             )
         } catch (e: Exception) {
             clear()
@@ -75,16 +82,48 @@ class KeystoreSessionStore(context: Context) : SessionStore {
 
     @Synchronized
     override fun save(session: AuthSession) {
+        save(session, isNewLogin = false)
+    }
+
+    @Synchronized
+    override fun save(session: AuthSession, isNewLogin: Boolean) {
+        val loginEpoch = if (isNewLogin) {
+            session.loginAt.epochSecond
+        } else {
+            val existing = try {
+                prefs.getString(KEY_BLOB, null)?.let { decryptJson(it) }
+            } catch (_: Exception) {
+                null
+            }
+            val prev = existing?.optLong("l", 0L) ?: 0L
+            if (prev > 0L) prev else session.loginAt.epochSecond
+        }
+
         val json = JSONObject()
             .put("s", session.sessionToken)
             .put("r", session.refreshToken)
             .put("e", session.expiresAt.epochSecond)
-        val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, secretKey())
-        val encrypted = cipher.doFinal(json.toString().toByteArray(Charsets.UTF_8))
+            .put("l", loginEpoch)
         prefs.edit()
-            .putString(KEY_BLOB, Base64.encodeToString(cipher.iv + encrypted, Base64.NO_WRAP))
+            .putString(KEY_BLOB, encryptJson(json))
             .commit()
+    }
+
+    @Synchronized
+    override fun getSessionRemainingMillis(): Long? {
+        val stored = prefs.getString(KEY_BLOB, null) ?: return null
+        return try {
+            val json = decryptJson(stored)
+            val loginEpoch = json.optLong("l", 0L)
+            if (loginEpoch <= 0L) return null
+            val nowSec = Instant.now().epochSecond
+            val timeoutSec = com.truckpark.management.core.common.AppConfig.SESSION_TIMEOUT_SECONDS
+            val elapsedSec = nowSec - loginEpoch
+            val remainingSec = timeoutSec - elapsedSec
+            if (remainingSec <= 0L) 0L else remainingSec * 1000L
+        } catch (_: Exception) {
+            null
+        }
     }
 
     @Synchronized

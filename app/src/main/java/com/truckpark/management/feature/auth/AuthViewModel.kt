@@ -12,6 +12,8 @@ import com.truckpark.management.domain.models.AuthUser
 import com.truckpark.management.domain.models.ManagedDevice
 import com.truckpark.management.domain.models.ManagedUser
 import com.truckpark.management.domain.repositories.AuthRepository
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -38,10 +40,25 @@ class AuthViewModel(
     )
     val uiState: StateFlow<AuthUiState> = _uiState.asStateFlow()
 
+    private var autoLogoutJob: Job? = null
+
     init {
         // If a valid session is already saved in Keystore, silently validate it
         if (authRepository.hasStoredSession()) {
             checkCurrentSession()
+        }
+    }
+
+    private fun scheduleAutoLogout() {
+        autoLogoutJob?.cancel()
+        val remainingMillis = authRepository.getSessionRemainingMillis() ?: return
+        if (remainingMillis <= 0L) {
+            signOut()
+            return
+        }
+        autoLogoutJob = viewModelScope.launch {
+            delay(remainingMillis)
+            signOut()
         }
     }
 
@@ -60,10 +77,18 @@ class AuthViewModel(
                     } else {
                         _uiState.value = AuthUiState.Authenticated(user)
                     }
+                    scheduleAutoLogout()
                 }
                 is AuthResult.Failure -> {
-                    // Session expired or revoked: return to Idle sign-in
-                    _uiState.value = AuthUiState.Idle
+                    if (result.error.code == com.truckpark.management.core.common.AuthError.DEVICE_REVOKED) {
+                        _uiState.value = AuthUiState.Error(
+                            message = result.error.message,
+                            code = result.error.code,
+                        )
+                    } else {
+                        // Session expired or revoked: return to Idle sign-in
+                        _uiState.value = AuthUiState.Idle
+                    }
                 }
             }
         }
@@ -86,6 +111,7 @@ class AuthViewModel(
                     } else {
                         _uiState.value = AuthUiState.Authenticated(user)
                     }
+                    scheduleAutoLogout()
                 }
                 is AuthResult.Failure -> {
                     _uiState.value = AuthUiState.Error(
@@ -236,6 +262,16 @@ class AuthViewModel(
         }
     }
 
+    fun reinstateDevice(
+        deviceId: String,
+        onComplete: (AuthResult<Unit>) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val result = authRepository.reinstateDevice(deviceId)
+            onComplete(result)
+        }
+    }
+
     fun loadUserExceptions(
         userId: String,
         onComplete: (AuthResult<List<com.truckpark.management.domain.models.UserPermissionException>>) -> Unit,
@@ -289,6 +325,8 @@ class AuthViewModel(
         code: String,
         newEmail: String? = null,
         newPassword: String? = null,
+        fullName: String? = null,
+        phone: String? = null,
         onComplete: (AuthResult<Unit>) -> Unit,
     ) {
         viewModelScope.launch {
@@ -300,6 +338,8 @@ class AuthViewModel(
                     newEmail = newEmail,
                     newPassword = newPassword,
                     code = code,
+                    fullName = fullName,
+                    phone = phone,
                 )
             } else {
                 authRepository.verifyEmail(userId, code)
@@ -310,6 +350,8 @@ class AuthViewModel(
                         ?: current.user.email
                     val updatedUser = current.user.copy(
                         email = resolvedEmail,
+                        fullName = fullName?.trim()?.takeIf { it.isNotEmpty() } ?: current.user.fullName,
+                        phone = phone?.trim()?.takeIf { it.isNotEmpty() } ?: current.user.phone,
                         emailVerified = true,
                         mustChangePassword = false,
                     )
@@ -332,14 +374,23 @@ class AuthViewModel(
                 emailVerified = true,
             )
             _uiState.value = AuthUiState.Authenticated(updatedUser)
+            scheduleAutoLogout()
         }
     }
 
     fun signOut() {
+        autoLogoutJob?.cancel()
+        autoLogoutJob = null
         viewModelScope.launch {
             authRepository.signOut()
             _uiState.value = AuthUiState.Idle
         }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        autoLogoutJob?.cancel()
+        autoLogoutJob = null
     }
 
     fun clearError() {

@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.ksp)
 }
 
 import java.util.Properties
@@ -22,6 +23,32 @@ val ordsBaseUrl: String = envProperties.getProperty("ORDS_BASE_URL")
 val ordsModulePath: String = envProperties.getProperty("ORDS_MODULE_PATH") ?: "admin"
 val ordsApiVersion: String = envProperties.getProperty("ORDS_API_VERSION") ?: "v1"
 
+val sessionTimeoutRaw: String = envProperties.getProperty("SESSION_TIMEOUT")
+    ?: envProperties.getProperty("session.timeout")
+    ?: "20h"
+
+fun parseTimeoutSeconds(raw: String): Long {
+    val trimmed = raw.trim().lowercase()
+    if (trimmed.isEmpty()) return 20L * 3600L
+    trimmed.toLongOrNull()?.let { return it * 3600L }
+
+    val match = Regex("""^(\d+)\s*([a-z]+)$""").find(trimmed)
+    if (match != null) {
+        val (numStr, unit) = match.destructured
+        val num = numStr.toLongOrNull() ?: 20L
+        return when (unit) {
+            "d", "day", "days" -> num * 24L * 3600L
+            "h", "hr", "hrs", "hour", "hours" -> num * 3600L
+            "m", "min", "mins", "minute", "minutes" -> num * 60L
+            "s", "sec", "secs", "second", "seconds" -> num
+            else -> num * 3600L
+        }
+    }
+    return 20L * 3600L
+}
+
+val sessionTimeoutSeconds: Long = parseTimeoutSeconds(sessionTimeoutRaw)
+
 android {
     namespace = "com.truckpark.management"
     compileSdk = 35
@@ -36,6 +63,8 @@ android {
         buildConfigField("String", "ORDS_BASE_URL", "\"$ordsBaseUrl\"")
         buildConfigField("String", "ORDS_MODULE_PATH", "\"$ordsModulePath\"")
         buildConfigField("String", "ORDS_API_VERSION", "\"$ordsApiVersion\"")
+        buildConfigField("String", "SESSION_TIMEOUT_RAW", "\"$sessionTimeoutRaw\"")
+        buildConfigField("long", "SESSION_TIMEOUT_SECONDS", "${sessionTimeoutSeconds}L")
     }
 
     buildTypes {
@@ -72,7 +101,12 @@ dependencies {
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+    implementation("androidx.compose.material:material-icons-extended")
     debugImplementation(libs.androidx.compose.ui.tooling)
+
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
 
     testImplementation(libs.junit)
     testImplementation(libs.org.json)

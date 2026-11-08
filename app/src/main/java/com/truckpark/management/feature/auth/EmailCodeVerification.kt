@@ -339,11 +339,12 @@ fun EmailCodeVerification(
         }
     }
 
-    // 15-second safety timeout: if the server never responds, unblock the user
+    // 35-second safety timeout: network calls with hashing & ORDS roundtrips can take ~15-20s.
+    // If checking turns false when the server responds, this coroutine is automatically cancelled.
     LaunchedEffect(checking) {
         if (checking) {
-            delay(15_000)
-            if (checking) {
+            delay(35_000)
+            if (checking && otpState != OtpState.Success) {
                 checking = false
                 otpState = OtpState.Error
                 errorMessage = "Verification timed out. Please try again."
@@ -371,22 +372,21 @@ fun EmailCodeVerification(
             // Lock artwork with subtle ambient glow matching reference
             Box(
                 modifier = Modifier
-                    .size(92.dp)
-                    .drawBehind {
-                        drawCircle(
-                            brush = Brush.radialGradient(
-                                colors = listOf(Color(0xFF6366F1).copy(alpha = 0.35f), Color.Transparent),
-                                radius = size.width,
-                            ),
+                    .size(80.dp)
+                    .clip(CircleShape)
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(Color(0xFF6366F1).copy(alpha = 0.35f), Color(0xFF312E81).copy(alpha = 0.2f)),
                         )
-                    },
+                    )
+                    .border(1.dp, Color(0xFF6366F1).copy(alpha = 0.3f), CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = Icons.Default.Lock,
                     contentDescription = null,
                     tint = Color(0xFFC7D2FE),
-                    modifier = Modifier.size(54.dp),
+                    modifier = Modifier.size(36.dp),
                 )
             }
 

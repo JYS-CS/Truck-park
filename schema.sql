@@ -214,6 +214,46 @@ CREATE TABLE email_outbox (
 
 CREATE INDEX idx_outbox_queue ON email_outbox(status, next_try_at);
 
+-- 11. Truck Visits & Vehicles (Milestone 3)
+CREATE SEQUENCE seq_visit_ref START WITH 1 INCREMENT BY 1 NOCACHE;
+
+CREATE TABLE vehicles (
+  id           VARCHAR2(36) DEFAULT LOWER(RAWTOHEX(SYS_GUID())) PRIMARY KEY,
+  plate_number VARCHAR2(20) NOT NULL,
+  created_by   VARCHAR2(36) REFERENCES users(id),
+  created_at   TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP NOT NULL,
+  CONSTRAINT uq_vehicles_plate UNIQUE (plate_number)
+);
+
+-- id is generated on the handset so that retried syncs are idempotent.
+CREATE TABLE truck_visits (
+  id                VARCHAR2(36) PRIMARY KEY,
+  reference         VARCHAR2(30) NOT NULL,
+  vehicle_id        VARCHAR2(36) NOT NULL REFERENCES vehicles(id),
+  plate_number      VARCHAR2(20) NOT NULL,
+  visit_type        VARCHAR2(20) NOT NULL,
+  status            VARCHAR2(12) DEFAULT 'OPEN' NOT NULL,
+  driver_name       VARCHAR2(200),
+  driver_phone      VARCHAR2(40),
+  arrival_notes     VARCHAR2(1000),
+  arrived_at        TIMESTAMP WITH TIME ZONE NOT NULL,
+  arrived_by        VARCHAR2(36) NOT NULL REFERENCES users(id),
+  arrival_device_id VARCHAR2(36),
+  departed_at       TIMESTAMP WITH TIME ZONE,
+  departed_by       VARCHAR2(36) REFERENCES users(id),
+  departure_notes   VARCHAR2(1000),
+  row_version       NUMBER DEFAULT 1 NOT NULL,
+  created_at        TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP NOT NULL,
+  updated_at        TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP NOT NULL,
+  CONSTRAINT uq_visit_reference UNIQUE (reference),
+  CONSTRAINT chk_visit_type CHECK (visit_type IN ('QUICK', 'OVERNIGHT', 'TRANSIT', 'LOADING', 'OTHER')),
+  CONSTRAINT chk_visit_status CHECK (status IN ('OPEN', 'COMPLETED')),
+  CONSTRAINT chk_visit_departure CHECK (departed_at IS NULL OR departed_at >= arrived_at)
+);
+
+CREATE INDEX idx_visits_plate_status ON truck_visits(plate_number, status);
+CREATE INDEX idx_visits_status_arrived ON truck_visits(status, arrived_at);
+
 -- =============================================================================
 -- 3. POPULATING INITIAL ROLES AND PERMISSIONS
 -- =============================================================================
@@ -525,7 +565,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_AUTH AS
     p_user_id := LOWER(RAWTOHEX(SYS_GUID()));
 
     INSERT INTO users (id, full_name, email, status)
-    VALUES (p_user_id, TRIM(p_full_name), LOWER(TRIM(v_email)), 'PENDING_VERIFICATION');
+    VALUES (p_user_id, INITCAP(TRIM(p_full_name)), LOWER(TRIM(v_email)), 'PENDING_VERIFICATION');
 
     v_salt := PKG_CRYPTO.generate_salt();
     v_pwd_hash := PKG_CRYPTO.hash_password(p_password, v_salt, 600000);
@@ -578,7 +618,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_AUTH AS
         INTO p_user_id, p_user_status, v_deact_at, v_hash, v_salt, v_iters, v_failed, v_locked
         FROM users u
         JOIN auth_identities ai ON ai.user_id = u.id AND ai.provider = 'PASSWORD'
-       WHERE u.email = v_email;
+        WHERE LOWER(u.email) = v_email;
     EXCEPTION
       WHEN NO_DATA_FOUND THEN
         -- OWASP anti-enumeration: perform full 600,000-iteration PBKDF2 dummy hash so
@@ -721,12 +761,13 @@ CREATE OR REPLACE PACKAGE BODY PKG_AUTH AS
     v_rot_at   TIMESTAMP WITH TIME ZONE;
     v_exp_at   TIMESTAMP WITH TIME ZONE;
     v_rev_at   TIMESTAMP WITH TIME ZONE;
+    v_dev_rev  TIMESTAMP WITH TIME ZONE;
   BEGIN
     v_old_hash := PKG_CRYPTO.hash_sha256(TRIM(p_old_refresh_token));
 
     BEGIN
-      SELECT rt.rotated_at, rt.expires_at, rt.revoked_at, d.user_id
-        INTO v_rot_at, v_exp_at, v_rev_at, v_user_id
+      SELECT rt.rotated_at, rt.expires_at, rt.revoked_at, d.user_id, d.revoked_at
+        INTO v_rot_at, v_exp_at, v_rev_at, v_user_id, v_dev_rev
         FROM refresh_tokens rt
         JOIN devices d ON d.id = rt.device_id
        WHERE rt.token_hash = v_old_hash AND rt.device_id = p_device_id;
@@ -735,13 +776,17 @@ CREATE OR REPLACE PACKAGE BODY PKG_AUTH AS
         RAISE_APPLICATION_ERROR(-20014, 'Invalid refresh token');
     END;
 
+    IF v_dev_rev IS NOT NULL THEN
+      RAISE_APPLICATION_ERROR(-20015, 'Access from this device has been disabled, please contact your system administrator.');
+    END IF;
+
     IF v_rot_at IS NOT NULL THEN
       -- Replay attack detected: revoke entire device immediately
       UPDATE devices SET revoked_at = SYSTIMESTAMP, revoke_reason = 'Refresh token reuse detected'
        WHERE id = p_device_id;
       UPDATE sessions SET revoked_at = SYSTIMESTAMP WHERE device_id = p_device_id;
       UPDATE refresh_tokens SET revoked_at = SYSTIMESTAMP WHERE device_id = p_device_id;
-      RAISE_APPLICATION_ERROR(-20015, 'SECURITY: Compromised token replay. Device revoked.');
+      RAISE_APPLICATION_ERROR(-20015, 'Access from this device has been disabled, please contact your system administrator.');
     END IF;
 
     IF v_rev_at IS NOT NULL OR v_exp_at < SYSTIMESTAMP THEN
@@ -782,6 +827,7 @@ CREATE OR REPLACE PACKAGE PKG_ADMIN AS
   PROCEDURE reject_user(p_user_id IN VARCHAR2, p_reason IN VARCHAR2);
   PROCEDURE deactivate_user(p_user_id IN VARCHAR2, p_deactivate_at IN TIMESTAMP WITH TIME ZONE DEFAULT NULL);
   PROCEDURE revoke_device(p_device_id IN VARCHAR2, p_reason IN VARCHAR2);
+  PROCEDURE reinstate_device(p_device_id IN VARCHAR2);
   PROCEDURE add_permission_exception(
     p_user_id         IN VARCHAR2,
     p_permission_code IN VARCHAR2,
@@ -887,6 +933,19 @@ CREATE OR REPLACE PACKAGE BODY PKG_ADMIN AS
     INSERT INTO audit_events (actor_user_id, action, target_type, target_id, reason)
     VALUES (v_admin_id, 'DEVICE_REVOKED', 'DEVICE', p_device_id, p_reason);
   END revoke_device;
+
+  PROCEDURE reinstate_device(p_device_id IN VARCHAR2) IS
+    v_admin_id VARCHAR2(36) := PKG_AUTHZ.get_current_user_id();
+  BEGIN
+    PKG_AUTHZ.require_permission('device.manage');
+
+    UPDATE devices
+       SET revoked_at = NULL, revoked_by = NULL, revoke_reason = NULL
+     WHERE id = p_device_id;
+
+    INSERT INTO audit_events (actor_user_id, action, target_type, target_id, reason)
+    VALUES (v_admin_id, 'DEVICE_REINSTATED', 'DEVICE', p_device_id, 'Handset access restored by administrator');
+  END reinstate_device;
 
   PROCEDURE add_permission_exception(
     p_user_id         IN VARCHAR2,

@@ -31,11 +31,15 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -108,8 +112,19 @@ fun AdminSecuritySetupScreen(
     var passwordChanged by rememberSaveable { mutableStateOf(initialPasswordChanged) }
     var emailVerified by rememberSaveable { mutableStateOf(initialEmailVerified || user.emailVerified) }
 
-    // Password change fields
-    // false = credentials page, true = email verification page (separate screen)
+    // Profile update fields
+    var fullName by rememberSaveable {
+        val raw = user.fullName.takeIf { !it.equals("System Administrator", ignoreCase = true) && !it.equals("Administrator", ignoreCase = true) && !it.equals("null", ignoreCase = true) }.orEmpty()
+        mutableStateOf(raw)
+    }
+    var phoneNumber by rememberSaveable {
+        val raw = user.phone?.takeIf { !it.equals("null", ignoreCase = true) }.orEmpty()
+        mutableStateOf(raw)
+    }
+    var selectedCountryIso by rememberSaveable { mutableStateOf("ZM") }
+    val selectedCountry = remember(selectedCountryIso) {
+        LIGHTWEIGHT_COUNTRY_CODES.find { it.iso == selectedCountryIso } ?: DEFAULT_COUNTRY_CODE
+    }
     var onVerifyPage by rememberSaveable { mutableStateOf(initialPasswordChanged) }
     var newPassword by rememberSaveable { mutableStateOf("") }
     var newEmail by rememberSaveable {
@@ -264,9 +279,33 @@ fun AdminSecuritySetupScreen(
                     } else {
                         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                             Text(
-                                text = "Please provide your personal email and choose a strong password.",
+                                text = "Please provide your full name, phone number, email and choose a strong password.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = if (dark) Color(0xFF94A3B8) else Color(0xFF64748B),
+                            )
+
+                            SetupInputField(
+                                value = fullName,
+                                onValueChange = {
+                                    fullName = it
+                                    passwordError = null
+                                },
+                                placeholder = "Full name",
+                                icon = Icons.Default.Person,
+                                keyboardType = KeyboardType.Text,
+                                dark = dark,
+                            )
+
+                            // Phone number with country code picker
+                            PhoneInputField(
+                                value = phoneNumber,
+                                onValueChange = {
+                                    phoneNumber = AuthSecurityUtils.filterPhoneInput(it, phoneNumber)
+                                    passwordError = null
+                                },
+                                selectedCountry = selectedCountry,
+                                onCountrySelected = { selectedCountryIso = it.iso },
+                                dark = dark,
                             )
 
                             SetupInputField(
@@ -336,6 +375,14 @@ fun AdminSecuritySetupScreen(
                                         passwordError = "New password must be different from the default password"
                                         return@SetupActionButton
                                     }
+                                    val formattedPhone = if (phoneNumber.isNotBlank()) {
+                                        val phoneErr = AuthSecurityUtils.validatePhone(phoneNumber, selectedCountry.dialCode)
+                                        if (phoneErr != null) {
+                                            passwordError = phoneErr
+                                            return@SetupActionButton
+                                        }
+                                        AuthSecurityUtils.formatPhoneWithDialCode(phoneNumber, selectedCountry.dialCode)
+                                    } else null
                                     isChangingPassword = true
                                     passwordError = null
                                     // Send verification code first; credentials are only saved to DB once the code is verified
@@ -402,10 +449,16 @@ fun AdminSecuritySetupScreen(
                                 }
                             },
                             onVerify = { code, onResult ->
+                                val formattedPhone = if (phoneNumber.isNotBlank()) {
+                                    AuthSecurityUtils.formatPhoneWithDialCode(phoneNumber, selectedCountry.dialCode)
+                                } else null
+
                                 viewModel.verifyEmail(
                                     code = code,
                                     newEmail = targetEmail,
                                     newPassword = newPassword.takeIf { it.isNotBlank() },
+                                    fullName = fullName.trim().takeIf { it.isNotEmpty() },
+                                    phone = formattedPhone,
                                 ) { result ->
                                     when (result) {
                                         is AuthResult.Success -> {
@@ -769,6 +822,137 @@ private fun SetupInputField(
                         )
                         .padding(4.dp),
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PhoneInputField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    selectedCountry: CountryDialCode,
+    onCountrySelected: (CountryDialCode) -> Unit,
+    dark: Boolean,
+) {
+    val bg = if (dark) Color(0xFF1E293B) else Color.White
+    val border = if (dark) Color(0xFF334155) else Color(0xFFCBD5E1)
+    var expandedDropdown by remember { mutableStateOf(false) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(52.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(bg)
+            .border(1.dp, border, RoundedCornerShape(14.dp))
+            .padding(horizontal = 14.dp),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            // Country picker button
+            val hasMultipleCountries = LIGHTWEIGHT_COUNTRY_CODES.size > 1
+            Box {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .then(
+                            if (hasMultipleCountries) Modifier.clickable { expandedDropdown = true }
+                            else Modifier
+                        )
+                        .padding(vertical = 4.dp, horizontal = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "${selectedCountry.flag} ${selectedCountry.dialCode}",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                        color = if (dark) Color.White else Color(0xFF0F172A),
+                    )
+                    if (hasMultipleCountries) {
+                        Spacer(Modifier.width(4.dp))
+                        Icon(
+                            imageVector = Icons.Default.ArrowDropDown,
+                            contentDescription = null,
+                            tint = if (dark) Color(0xFF94A3B8) else Color(0xFF64748B),
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                }
+
+                if (hasMultipleCountries) {
+                    DropdownMenu(
+                        expanded = expandedDropdown,
+                        onDismissRequest = { expandedDropdown = false },
+                    ) {
+                        LIGHTWEIGHT_COUNTRY_CODES.forEach { country ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text("${country.flag} ${country.name} (${country.dialCode})")
+                                },
+                                onClick = {
+                                    onCountrySelected(country)
+                                    expandedDropdown = false
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.width(10.dp))
+
+            Box(modifier = Modifier.weight(1f)) {
+                if (value.isEmpty()) {
+                    Text(
+                        text = "Phone number (optional)",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (dark) Color(0xFF64748B) else Color(0xFF94A3B8),
+                    )
+                }
+
+                BasicTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(
+                        color = if (dark) Color.White else Color(0xFF0F172A),
+                    ),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Phone,
+                        imeAction = ImeAction.Next,
+                    ),
+                    cursorBrush = SolidColor(if (dark) Color(0xFF38BDF8) else Color(0xFF0284C7)),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+
+            val isPhoneComplete = remember(value, selectedCountry.dialCode) {
+                value.isNotBlank() && AuthSecurityUtils.validatePhone(value, selectedCountry.dialCode) == null
+            }
+
+            AnimatedVisibility(
+                visible = isPhoneComplete,
+                enter = fadeIn(),
+                exit = fadeOut(),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF10B981).copy(alpha = 0.18f))
+                        .border(1.dp, Color(0xFF10B981).copy(alpha = 0.7f), CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = "Valid phone number",
+                        tint = Color(0xFF10B981),
+                        modifier = Modifier.size(15.dp),
+                    )
+                }
             }
         }
     }

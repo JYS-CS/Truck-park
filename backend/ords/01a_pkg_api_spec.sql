@@ -26,19 +26,23 @@ CREATE OR REPLACE PACKAGE PKG_API AS
 
   PROCEDURE accept_invite(
     p_token IN VARCHAR2, p_full_name IN VARCHAR2, p_password IN VARCHAR2,
+    p_device_id IN VARCHAR2 DEFAULT NULL,
     p_status OUT NUMBER, p_body OUT CLOB);
 
   PROCEDURE check_email(
     p_email IN VARCHAR2,
+    p_device_id IN VARCHAR2 DEFAULT NULL,
     p_status OUT NUMBER, p_body OUT CLOB);
 
   PROCEDURE request_signup_code(
     p_email IN VARCHAR2, p_full_name IN VARCHAR2 DEFAULT NULL,
+    p_device_id IN VARCHAR2 DEFAULT NULL,
     p_status OUT NUMBER, p_body OUT CLOB);
 
   PROCEDURE register(
     p_full_name IN VARCHAR2, p_email IN VARCHAR2, p_phone IN VARCHAR2 DEFAULT NULL,
     p_password IN VARCHAR2, p_code IN VARCHAR2 DEFAULT NULL,
+    p_device_id IN VARCHAR2 DEFAULT NULL,
     p_status OUT NUMBER, p_body OUT CLOB);
 
   PROCEDURE verify_email(
@@ -53,12 +57,14 @@ CREATE OR REPLACE PACKAGE PKG_API AS
 
   PROCEDURE request_password_reset(
     p_email IN VARCHAR2,
+    p_device_id IN VARCHAR2 DEFAULT NULL,
     p_status OUT NUMBER, p_body OUT CLOB);
 
   PROCEDURE reset_password(
     p_email IN VARCHAR2,
     p_code IN VARCHAR2,
     p_new_password IN VARCHAR2,
+    p_device_id IN VARCHAR2 DEFAULT NULL,
     p_status OUT NUMBER, p_body OUT CLOB);
 
   -- Signed in (p_authorization is the raw "Authorization" header) ----------
@@ -67,6 +73,8 @@ CREATE OR REPLACE PACKAGE PKG_API AS
     p_new_email IN VARCHAR2,
     p_new_password IN VARCHAR2,
     p_code IN VARCHAR2 DEFAULT NULL,
+    p_full_name IN VARCHAR2 DEFAULT NULL,
+    p_phone IN VARCHAR2 DEFAULT NULL,
     p_status OUT NUMBER, p_body OUT CLOB);
 
   PROCEDURE logout(
@@ -106,6 +114,10 @@ CREATE OR REPLACE PACKAGE PKG_API AS
     p_authorization IN VARCHAR2, p_device_id IN VARCHAR2, p_reason IN VARCHAR2,
     p_status OUT NUMBER, p_body OUT CLOB);
 
+  PROCEDURE reinstate_device(
+    p_authorization IN VARCHAR2, p_device_id IN VARCHAR2,
+    p_status OUT NUMBER, p_body OUT CLOB);
+
   PROCEDURE list_user_exceptions(
     p_authorization IN VARCHAR2, p_user_id IN VARCHAR2,
     p_status OUT NUMBER, p_body OUT CLOB);
@@ -118,6 +130,22 @@ CREATE OR REPLACE PACKAGE PKG_API AS
 
   PROCEDURE revoke_user_exception(
     p_authorization IN VARCHAR2, p_exception_id IN VARCHAR2,
+    p_status OUT NUMBER, p_body OUT CLOB);
+
+  -- Milestone 3: truck visits. Timestamps are ISO-8601 UTC ('YYYY-MM-DDTHH24:MI:SSZ') from the handset.
+  PROCEDURE record_arrival(
+    p_authorization IN VARCHAR2, p_visit_id IN VARCHAR2, p_plate_number IN VARCHAR2,
+    p_visit_type IN VARCHAR2, p_driver_name IN VARCHAR2, p_driver_phone IN VARCHAR2,
+    p_notes IN VARCHAR2, p_arrived_at IN VARCHAR2, p_allow_duplicate IN VARCHAR2,
+    p_status OUT NUMBER, p_body OUT CLOB);
+
+  PROCEDURE record_departure(
+    p_authorization IN VARCHAR2, p_visit_id IN VARCHAR2, p_departed_at IN VARCHAR2,
+    p_notes IN VARCHAR2,
+    p_status OUT NUMBER, p_body OUT CLOB);
+
+  PROCEDURE list_visits(
+    p_authorization IN VARCHAR2, p_visit_status IN VARCHAR2,
     p_status OUT NUMBER, p_body OUT CLOB);
 
   -- Exposed so tests can check them directly, and because SQL inside the body calls them.

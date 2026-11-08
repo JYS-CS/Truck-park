@@ -18,13 +18,23 @@ interface AuthRemoteDataSource {
     suspend fun signOut(sessionToken: String): AuthResult<Unit>
     suspend fun me(sessionToken: String): AuthResult<AuthUser>
     suspend fun acceptInvite(token: String, fullName: String, password: String): AuthResult<String>
+    suspend fun acceptInvite(
+        token: String,
+        fullName: String,
+        password: String,
+        deviceId: String?,
+    ): AuthResult<String> = acceptInvite(token, fullName, password)
     suspend fun verifyEmail(userId: String, code: String, sessionToken: String? = null): AuthResult<Unit>
     suspend fun sendVerificationCode(sessionToken: String): AuthResult<Unit>
     suspend fun sendVerificationCode(sessionToken: String, email: String?): AuthResult<Unit> =
         sendVerificationCode(sessionToken)
     suspend fun checkEmailAvailable(email: String): AuthResult<Unit> = AuthResult.Success(Unit)
+    suspend fun checkEmailAvailable(email: String, deviceId: String?): AuthResult<Unit> =
+        checkEmailAvailable(email)
     suspend fun requestSignUpCode(email: String, fullName: String = ""): AuthResult<Unit> =
         checkEmailAvailable(email)
+    suspend fun requestSignUpCode(email: String, fullName: String, deviceId: String?): AuthResult<Unit> =
+        requestSignUpCode(email, fullName)
     suspend fun register(
         fullName: String,
         email: String,
@@ -32,6 +42,14 @@ interface AuthRemoteDataSource {
         password: String,
         code: String,
     ): AuthResult<String> = AuthResult.Success("")
+    suspend fun register(
+        fullName: String,
+        email: String,
+        phone: String,
+        password: String,
+        code: String,
+        deviceId: String?,
+    ): AuthResult<String> = register(fullName, email, phone, password, code)
     suspend fun changePassword(
         sessionToken: String,
         newEmail: String,
@@ -42,13 +60,23 @@ interface AuthRemoteDataSource {
         newEmail: String,
         newPassword: String,
         code: String?,
+        fullName: String? = null,
+        phone: String? = null,
     ): AuthResult<Unit> = changePassword(sessionToken, newEmail, newPassword)
     suspend fun requestPasswordReset(email: String): AuthResult<Unit> = AuthResult.Success(Unit)
+    suspend fun requestPasswordReset(email: String, deviceId: String?): AuthResult<Unit> =
+        requestPasswordReset(email)
     suspend fun resetPassword(
         email: String,
         code: String,
         newPassword: String,
     ): AuthResult<Unit> = AuthResult.Success(Unit)
+    suspend fun resetPassword(
+        email: String,
+        code: String,
+        newPassword: String,
+        deviceId: String?,
+    ): AuthResult<Unit> = resetPassword(email, code, newPassword)
     suspend fun listUsers(sessionToken: String, status: String? = null): AuthResult<List<ManagedUser>> =
         AuthResult.Success(emptyList())
     suspend fun updateUserRole(
@@ -62,6 +90,10 @@ interface AuthRemoteDataSource {
         sessionToken: String,
         deviceId: String,
         reason: String,
+    ): AuthResult<Unit> = AuthResult.Success(Unit)
+    suspend fun reinstateDevice(
+        sessionToken: String,
+        deviceId: String,
     ): AuthResult<Unit> = AuthResult.Success(Unit)
     suspend fun listUserExceptions(
         sessionToken: String,

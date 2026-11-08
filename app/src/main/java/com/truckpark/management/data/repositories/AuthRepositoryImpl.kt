@@ -68,11 +68,13 @@ class AuthRepositoryImpl(
 
     override fun hasStoredSession(): Boolean = store.load() != null
 
+    override fun getSessionRemainingMillis(): Long? = store.getSessionRemainingMillis()
+
     override suspend fun signIn(email: String, password: String): AuthResult<SignInResult> {
         val cleanEmail = email.trim().lowercase()
         val result = remote.signIn(cleanEmail, password, devices.deviceId(), deviceName)
         if (result is AuthResult.Success) {
-            store.save(result.value.session)
+            store.save(result.value.session, isNewLogin = true)
             val user = result.value.user
             lastKnownUser = user
             lastKnownEmail = user.email.trim().lowercase()
@@ -102,7 +104,7 @@ class AuthRepositoryImpl(
     }
 
     override suspend fun acceptInvite(token: String, fullName: String, password: String): AuthResult<String> =
-        remote.acceptInvite(token.trim(), fullName.trim(), password)
+        remote.acceptInvite(token.trim(), fullName.trim(), password, devices.deviceId())
 
     override suspend fun verifyEmail(userId: String, code: String): AuthResult<Unit> {
         val trimmedCode = code.trim()
@@ -133,6 +135,8 @@ class AuthRepositoryImpl(
         newEmail: String,
         newPassword: String,
         code: String,
+        fullName: String?,
+        phone: String?,
     ): AuthResult<Unit> {
         val cleanEmail = newEmail.trim().lowercase()
         val trimmedCode = code.trim()
@@ -151,7 +155,14 @@ class AuthRepositoryImpl(
             )
 
         val changeResult = authorised { token ->
-            remote.changePassword(token, targetEmail, newPassword, trimmedCode)
+            remote.changePassword(
+                sessionToken = token,
+                newEmail = targetEmail,
+                newPassword = newPassword,
+                code = trimmedCode,
+                fullName = fullName?.trim()?.takeIf { it.isNotEmpty() },
+                phone = phone?.trim()?.takeIf { it.isNotEmpty() },
+            )
         }
         if (changeResult is AuthResult.Failure) {
             return changeResult
@@ -161,6 +172,8 @@ class AuthRepositoryImpl(
         lastKnownEmail = targetEmail
         lastKnownUser = lastKnownUser?.copy(
             email = targetEmail,
+            fullName = fullName?.trim()?.takeIf { it.isNotEmpty() } ?: lastKnownUser?.fullName.orEmpty(),
+            phone = phone?.trim()?.takeIf { it.isNotEmpty() } ?: lastKnownUser?.phone,
             emailVerified = true,
             mustChangePassword = false,
         )
@@ -243,7 +256,7 @@ class AuthRepositoryImpl(
             )
         }
 
-        when (val sendResult = remote.requestSignUpCode(cleanEmail, cleanName)) {
+        when (val sendResult = remote.requestSignUpCode(cleanEmail, cleanName, devices.deviceId())) {
             is AuthResult.Failure -> {
                 val msg = if (sendResult.error.httpStatus == 409 || sendResult.error.code == "ALREADY_EXISTS") {
                     "An account with this email already exists."
@@ -279,7 +292,7 @@ class AuthRepositoryImpl(
             )
         }
 
-        when (val sendResult = remote.requestSignUpCode(targetEmail, current?.fullName.orEmpty())) {
+        when (val sendResult = remote.requestSignUpCode(targetEmail, current?.fullName.orEmpty(), devices.deviceId())) {
             is AuthResult.Failure -> return sendResult
             is AuthResult.Success -> Unit
         }
@@ -338,6 +351,7 @@ class AuthRepositoryImpl(
             phone = pending.phone,
             password = pending.password,
             code = trimmedCode,
+            deviceId = devices.deviceId(),
         )
         if (regResult is AuthResult.Failure) {
             val status = regResult.error.httpStatus
@@ -359,10 +373,10 @@ class AuthRepositoryImpl(
     }
 
     override suspend fun requestPasswordReset(email: String): AuthResult<Unit> =
-        remote.requestPasswordReset(email.trim().lowercase())
+        remote.requestPasswordReset(email.trim().lowercase(), devices.deviceId())
 
     override suspend fun resetPassword(email: String, code: String, newPassword: String): AuthResult<Unit> =
-        remote.resetPassword(email.trim().lowercase(), code.trim(), newPassword)
+        remote.resetPassword(email.trim().lowercase(), code.trim(), newPassword, devices.deviceId())
 
     override suspend fun listUsers(status: String?): AuthResult<List<ManagedUser>> =
         authorised { token -> remote.listUsers(token, status) }
@@ -375,6 +389,9 @@ class AuthRepositoryImpl(
 
     override suspend fun revokeDevice(deviceId: String, reason: String): AuthResult<Unit> =
         authorised { token -> remote.revokeDevice(token, deviceId, reason) }
+
+    override suspend fun reinstateDevice(deviceId: String): AuthResult<Unit> =
+        authorised { token -> remote.reinstateDevice(token, deviceId) }
 
     override suspend fun listUserExceptions(userId: String): AuthResult<List<com.truckpark.management.domain.models.UserPermissionException>> =
         authorised { token -> remote.listUserExceptions(token, userId) }
@@ -450,7 +467,7 @@ class AuthRepositoryImpl(
         )
     }
 
-    private suspend fun <T> authorised(call: suspend (sessionToken: String) -> AuthResult<T>): AuthResult<T> {
+    override suspend fun <T> authorised(call: suspend (sessionToken: String) -> AuthResult<T>): AuthResult<T> {
         var session = store.load() ?: return notSignedIn()
 
         if (isNearExpiry(session)) {
@@ -477,7 +494,7 @@ class AuthRepositoryImpl(
 
         val result = remote.refresh(current.refreshToken, devices.deviceId())
         when (result) {
-            is AuthResult.Success -> store.save(result.value)
+            is AuthResult.Success -> store.save(result.value, isNewLogin = false)
             is AuthResult.Failure -> if (result.error.endsSession) store.clear()
         }
         result
