@@ -132,11 +132,21 @@ CREATE OR REPLACE PACKAGE PKG_API AS
     p_authorization IN VARCHAR2, p_exception_id IN VARCHAR2,
     p_status OUT NUMBER, p_body OUT CLOB);
 
-  -- Milestone 3: truck visits. Timestamps are ISO-8601 UTC ('YYYY-MM-DDTHH24:MI:SSZ') from the handset.
+  -- Milestone 3 and 4: truck visits. Timestamps are ISO-8601 UTC ('YYYY-MM-DDTHH24:MI:SSZ') from the handset.
   PROCEDURE record_arrival(
     p_authorization IN VARCHAR2, p_visit_id IN VARCHAR2, p_plate_number IN VARCHAR2,
     p_visit_type IN VARCHAR2, p_driver_name IN VARCHAR2, p_driver_phone IN VARCHAR2,
     p_notes IN VARCHAR2, p_arrived_at IN VARCHAR2, p_allow_duplicate IN VARCHAR2,
+    p_status OUT NUMBER, p_body OUT CLOB);
+
+  PROCEDURE record_arrival(
+    p_authorization IN VARCHAR2, p_visit_id IN VARCHAR2, p_plate_number IN VARCHAR2,
+    p_visit_type IN VARCHAR2, p_driver_name IN VARCHAR2, p_driver_phone IN VARCHAR2,
+    p_notes IN VARCHAR2, p_arrived_at IN VARCHAR2, p_allow_duplicate IN VARCHAR2,
+    p_country_code IN VARCHAR2,
+    p_front_plate IN VARCHAR2,
+    p_horse_plate IN VARCHAR2,
+    p_transporter IN VARCHAR2,
     p_status OUT NUMBER, p_body OUT CLOB);
 
   PROCEDURE record_departure(

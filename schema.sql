@@ -15,11 +15,15 @@ BEGIN
     RAISE_APPLICATION_ERROR(-20999, 'Refusing to drop IAM tables: C_ALLOW_DROP is not YES');
   END IF;
   FOR t IN (SELECT table_name FROM user_tables WHERE table_name IN (
+    'TRUCK_VISITS', 'VEHICLES',
     'USER_PERMISSION_EXCEPTIONS', 'ROLE_PERMISSIONS', 'USER_ROLES', 'ROLES',
     'REFRESH_TOKENS', 'SESSIONS', 'DEVICES', 'ONE_TIME_CODES',
     'INVITES', 'AUTH_IDENTITIES', 'USERS', 'AUDIT_EVENTS', 'EMAIL_OUTBOX'
   )) LOOP
     EXECUTE IMMEDIATE 'DROP TABLE ' || t.table_name || ' CASCADE CONSTRAINTS PURGE';
+  END LOOP;
+  FOR s IN (SELECT sequence_name FROM user_sequences WHERE sequence_name = 'SEQ_VISIT_REF') LOOP
+    EXECUTE IMMEDIATE 'DROP SEQUENCE ' || s.sequence_name;
   END LOOP;
 END;
 /
@@ -239,6 +243,10 @@ CREATE TABLE truck_visits (
   arrived_at        TIMESTAMP WITH TIME ZONE NOT NULL,
   arrived_by        VARCHAR2(36) NOT NULL REFERENCES users(id),
   arrival_device_id VARCHAR2(36),
+  country_code      VARCHAR2(10) DEFAULT 'ZM',
+  front_plate       VARCHAR2(20),
+  horse_plate       VARCHAR2(20),
+  transporter       VARCHAR2(100),
   departed_at       TIMESTAMP WITH TIME ZONE,
   departed_by       VARCHAR2(36) REFERENCES users(id),
   departure_notes   VARCHAR2(1000),
@@ -253,6 +261,9 @@ CREATE TABLE truck_visits (
 
 CREATE INDEX idx_visits_plate_status ON truck_visits(plate_number, status);
 CREATE INDEX idx_visits_status_arrived ON truck_visits(status, arrived_at);
+CREATE INDEX idx_visits_front_plate ON truck_visits(front_plate, status);
+CREATE INDEX idx_visits_horse_plate ON truck_visits(horse_plate, status);
+CREATE INDEX idx_visits_transporter ON truck_visits(transporter);
 
 -- =============================================================================
 -- 3. POPULATING INITIAL ROLES AND PERMISSIONS
@@ -269,6 +280,7 @@ INSERT INTO roles (code, name, description) VALUES
 -- RUNNER
 INSERT INTO role_permissions VALUES ('RUNNER', 'visit.arrive');
 INSERT INTO role_permissions VALUES ('RUNNER', 'visit.depart');
+INSERT INTO role_permissions VALUES ('RUNNER', 'visit.override_open');
 INSERT INTO role_permissions VALUES ('RUNNER', 'sync.push');
 INSERT INTO role_permissions VALUES ('RUNNER', 'sync.pull');
 
@@ -280,13 +292,19 @@ INSERT INTO role_permissions VALUES ('SUPERVISOR', 'visit.override_open');
 INSERT INTO role_permissions VALUES ('SUPERVISOR', 'sync.push');
 INSERT INTO role_permissions VALUES ('SUPERVISOR', 'sync.pull');
 
--- ADMIN
+-- ADMIN (has user/device/audit admin and all operational permissions)
 INSERT INTO role_permissions VALUES ('ADMIN', 'user.invite');
 INSERT INTO role_permissions VALUES ('ADMIN', 'user.approve');
 INSERT INTO role_permissions VALUES ('ADMIN', 'user.deactivate');
 INSERT INTO role_permissions VALUES ('ADMIN', 'device.manage');
 INSERT INTO role_permissions VALUES ('ADMIN', 'audit.view');
 INSERT INTO role_permissions VALUES ('ADMIN', 'admin.view_email');
+INSERT INTO role_permissions VALUES ('ADMIN', 'visit.arrive');
+INSERT INTO role_permissions VALUES ('ADMIN', 'visit.depart');
+INSERT INTO role_permissions VALUES ('ADMIN', 'visit.override_open');
+INSERT INTO role_permissions VALUES ('ADMIN', 'visit.correct_critical');
+INSERT INTO role_permissions VALUES ('ADMIN', 'sync.push');
+INSERT INTO role_permissions VALUES ('ADMIN', 'sync.pull');
 
 COMMIT;
 
@@ -456,6 +474,16 @@ CREATE OR REPLACE PACKAGE BODY PKG_AUTHZ AS
 
     IF v_count > 0 THEN
       RAISE_APPLICATION_ERROR(-20003, 'NOT_AUTHORIZED: Permission explicitly revoked for user');
+    END IF;
+
+    -- Superuser: Users with role ADMIN can perform ANY action without restriction
+    SELECT COUNT(*) INTO v_count
+      FROM user_roles
+     WHERE user_id = g_user_id
+       AND role_code = 'ADMIN';
+
+    IF v_count > 0 THEN
+      RETURN;
     END IF;
 
     -- Check explicit grant exception

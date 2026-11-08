@@ -15,12 +15,14 @@ import com.truckpark.management.domain.models.TruckVisit
 import com.truckpark.management.domain.models.VisitType
 import com.truckpark.management.domain.models.normalizePlate
 import com.truckpark.management.domain.repositories.VisitsRepository
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 data class VisitsUiState(
@@ -129,8 +131,23 @@ class VisitsViewModel(
     )
 
     init {
-        // Automatically attempt a background sync and refresh on screen startup
-        syncAndRefresh()
+        // Automatically attempt a background sync and refresh on screen startup silently
+        syncAndRefresh(silent = true)
+        startPeriodicAutoSync()
+    }
+
+    private fun startPeriodicAutoSync() {
+        viewModelScope.launch {
+            while (isActive) {
+                delay(20_000) // Silent background synchronization every 20 seconds
+                if (!_isSyncing.value) {
+                    try {
+                        repository.sync()
+                        repository.refresh()
+                    } catch (_: Exception) {}
+                }
+            }
+        }
     }
 
     fun onSearchQueryChanged(query: String) {
@@ -145,13 +162,13 @@ class VisitsViewModel(
         _selectedTypeFilter.value = if (_selectedTypeFilter.value == type) null else type
     }
 
-    fun recordArrival(draft: ArrivalDraft, allowDuplicate: Boolean = false) {
+    fun recordArrival(draft: ArrivalDraft, allowDuplicate: Boolean = true) {
         viewModelScope.launch {
             val outcome = repository.recordArrival(draft, allowDuplicate)
             _arrivalOutcome.value = outcome
             if (outcome is ArrivalOutcome.Saved) {
-                // Trigger background sync for this new record
-                triggerSync()
+                // Trigger background silent sync immediately for this new record
+                triggerSync(silent = true)
             }
         }
     }
@@ -161,29 +178,37 @@ class VisitsViewModel(
             val result = repository.recordDeparture(visitId, notes)
             _departureOutcome.value = result
             if (result is AuthResult.Success) {
-                triggerSync()
+                triggerSync(silent = true)
             }
         }
     }
 
-    fun triggerSync() {
+    fun triggerSync(silent: Boolean = true) {
         if (_isSyncing.value) return
         viewModelScope.launch {
             _isSyncing.value = true
             val report = repository.sync()
             _isSyncing.value = false
-            formatSyncMessage(report)
+            if (!silent) {
+                formatSyncMessage(report)
+            } else if (report.signedOut) {
+                _syncBannerMessage.value = "Session expired. Please sign in again to sync."
+            }
         }
     }
 
-    fun syncAndRefresh() {
+    fun syncAndRefresh(silent: Boolean = true) {
         if (_isSyncing.value) return
         viewModelScope.launch {
             _isSyncing.value = true
             val report = repository.sync()
             repository.refresh()
             _isSyncing.value = false
-            formatSyncMessage(report)
+            if (!silent) {
+                formatSyncMessage(report)
+            } else if (report.signedOut) {
+                _syncBannerMessage.value = "Session expired. Please sign in again to sync."
+            }
         }
     }
 

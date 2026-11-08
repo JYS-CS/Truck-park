@@ -1,9 +1,17 @@
 package com.truckpark.management.navigation
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.padding
@@ -37,6 +45,7 @@ import com.truckpark.management.feature.visits.VisitsScreen
  * and top-right hamburger options drawer.
  * Navigation tabs and workspace cards dynamically adapt to the signed-in user's role.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun TruckParkAppRoot(
     themeMode: ThemeMode,
@@ -50,7 +59,17 @@ fun TruckParkAppRoot(
     val currentDestination = backStackEntry?.destination
     var selectedRoute by remember { mutableStateOf(TopLevelDestination.Home.route) }
     var moreSheetOpen by remember { mutableStateOf(false) }
+    var showBottomNavByScreen by remember { mutableStateOf(true) }
     val effectiveRoute = currentDestination?.route ?: selectedRoute
+
+    // Hide bottom navigation bar when soft keyboard (IME) is visible or when a sub-screen flow requests it
+    val isImeVisible = WindowInsets.isImeVisible
+    val showBottomBar = showBottomNavByScreen && !isImeVisible
+
+    val navBottomPadding by animateDpAsState(
+        targetValue = if (showBottomBar) 80.dp else 0.dp,
+        label = "navBottomPadding",
+    )
 
     // Filter navigation bar tabs dynamically based on the user's assigned role
     val roleDestinations = remember(user?.primaryRole) {
@@ -88,7 +107,7 @@ fun TruckParkAppRoot(
             Box(
                 Modifier
                     .fillMaxSize()
-                    .padding(bottom = 80.dp),
+                    .padding(bottom = navBottomPadding),
             ) {
                 NavHost(navController = navController, startDestination = TopLevelDestination.Home.route) {
                     composable(TopLevelDestination.Home.route) {
@@ -107,6 +126,7 @@ fun TruckParkAppRoot(
                         VisitsScreen(
                             user = user,
                             onMenuClick = { moreSheetOpen = true },
+                            onToggleBottomNav = { showBottomNavByScreen = it },
                         )
                     }
                     composable(TopLevelDestination.Registers.route) {
@@ -134,21 +154,26 @@ fun TruckParkAppRoot(
                 }
             }
 
-            // Floating iOS Liquid Glass Navigation Bar (tabs adapt to role)
-            LiquidGlassNavigationBar(
-                destinations = roleDestinations,
-                currentRoute = effectiveRoute,
-                onDestinationSelected = { destination ->
-                    selectedRoute = destination.route
-                    navController.navigate(destination.route) {
-                        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                        launchSingleTop = true
-                        restoreState = true
-                    }
-                },
-                modifier = Modifier
-                    .align(Alignment.BottomCenter),
-            )
+            // Floating iOS Liquid Glass Navigation Bar (hidden when keyboard is open or in sub-flows)
+            AnimatedVisibility(
+                visible = showBottomBar,
+                enter = fadeIn() + slideInVertically { it },
+                exit = fadeOut() + slideOutVertically { it },
+                modifier = Modifier.align(Alignment.BottomCenter),
+            ) {
+                LiquidGlassNavigationBar(
+                    destinations = roleDestinations,
+                    currentRoute = effectiveRoute,
+                    onDestinationSelected = { destination ->
+                        selectedRoute = destination.route
+                        navController.navigate(destination.route) {
+                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
+                )
+            }
 
             // Top-right Hamburger Menu Slide-over Drawer / BottomSheet matching HTML
             MoreOptionsBottomSheet(

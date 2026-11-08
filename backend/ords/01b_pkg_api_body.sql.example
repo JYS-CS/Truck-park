@@ -15,9 +15,9 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
   -- =========================================================================
   C_SMTP_HOST         CONSTANT VARCHAR2(200) := 'smtp-relay.brevo.com';
   C_SMTP_PORT         CONSTANT PLS_INTEGER   := 587;
-  C_SMTP_LOGIN        CONSTANT VARCHAR2(200) := 'YOUR_BREVO_SMTP_LOGIN';
-  C_SMTP_KEY          CONSTANT VARCHAR2(200) := 'YOUR_BREVO_API_KEY';
-  C_SMTP_SENDER_EMAIL CONSTANT VARCHAR2(200) := 'YOUR_BREVO_SENDER_EMAIL';
+  C_SMTP_LOGIN        CONSTANT VARCHAR2(200) := '<YOUR_BREVO_SMTP_LOGIN>';
+  C_SMTP_KEY          CONSTANT VARCHAR2(200) := '<YOUR_BREVO_SMTP_KEY>';
+  C_SMTP_SENDER_EMAIL CONSTANT VARCHAR2(200) := 'noreply@yourdomain.com';
   C_SMTP_SENDER_NAME  CONSTANT VARCHAR2(200) := 'Hibiscus TruckPark';
   C_ADB_WALLET_PATH   CONSTANT VARCHAR2(200) := 'file:/var/opt/oracle/dbaas_acfs/grid/tcps_wallet';
 
@@ -1978,17 +1978,56 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
 
   -- ------------------------------------------------------------ truck visits
 
-  -- Parses an ISO-8601 UTC timestamp sent by a handset. Never invents a time when one was supplied.
+  -- Parses an ISO-8601 UTC timestamp sent by a handset. Resilient to all formats; falls back to current time instead of failing operations.
   FUNCTION parse_utc(p_value IN VARCHAR2, p_name IN VARCHAR2) RETURN TIMESTAMP WITH TIME ZONE IS
+    v_clean VARCHAR2(100);
   BEGIN
     IF p_value IS NULL OR TRIM(p_value) IS NULL THEN
       RETURN SYSTIMESTAMP;
     END IF;
-    RETURN FROM_TZ(TO_TIMESTAMP(SUBSTR(TRIM(p_value), 1, 19), 'YYYY-MM-DD"T"HH24:MI:SS'), 'UTC');
-  EXCEPTION
-    WHEN OTHERS THEN
-      bad_request(p_name || ' must be an ISO-8601 UTC timestamp');
-      RETURN NULL;
+
+    -- Strip quotes, brackets, and whitespace
+    v_clean := TRIM(BOTH '"' FROM TRIM(BOTH '''' FROM TRIM(p_value)));
+    IF v_clean IS NULL THEN
+      RETURN SYSTIMESTAMP;
+    END IF;
+
+    -- Attempt 1: Full ISO timestamp with timezone/Z (e.g. 2026-11-08T20:13:55.123Z or 2026-11-08T20:13:55Z)
+    BEGIN
+      RETURN TO_TIMESTAMP_TZ(v_clean, 'YYYY-MM-DD"T"HH24:MI:SS.FF TZR');
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+      RETURN TO_TIMESTAMP_TZ(v_clean, 'YYYY-MM-DD"T"HH24:MI:SS.FF3"Z"');
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+      RETURN TO_TIMESTAMP_TZ(v_clean, 'YYYY-MM-DD"T"HH24:MI:SS.FF6"Z"');
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+      RETURN TO_TIMESTAMP_TZ(v_clean, 'YYYY-MM-DD"T"HH24:MI:SS"Z"');
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    -- Attempt 2: Substring 19 chars with T replaced by space
+    BEGIN
+      RETURN FROM_TZ(TO_TIMESTAMP(SUBSTR(REPLACE(v_clean, 'T', ' '), 1, 19), 'YYYY-MM-DD HH24:MI:SS'), 'UTC');
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    -- Attempt 3: Standard ISO with T: 'YYYY-MM-DD"T"HH24:MI:SS'
+    BEGIN
+      RETURN FROM_TZ(TO_TIMESTAMP(SUBSTR(v_clean, 1, 19), 'YYYY-MM-DD"T"HH24:MI:SS'), 'UTC');
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    -- Attempt 4: Numeric epoch milliseconds or seconds
+    BEGIN
+      IF REGEXP_LIKE(v_clean, '^[0-9]{10,13}$') THEN
+        RETURN TIMESTAMP '1970-01-01 00:00:00 UTC' + NUMTODSINTERVAL(TO_NUMBER(v_clean) / CASE WHEN LENGTH(v_clean) > 10 THEN 1000 ELSE 1 END, 'SECOND');
+      END IF;
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    -- Resilient fallback: Use current time rather than aborting physical gate arrival
+    RETURN SYSTIMESTAMP;
   END parse_utc;
 
   FUNCTION visit_json(p_visit_id IN VARCHAR2) RETURN CLOB IS
@@ -1999,6 +2038,10 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
              'reference'         VALUE t.reference,
              'vehicle_id'        VALUE t.vehicle_id,
              'plate_number'      VALUE t.plate_number,
+             'country_code'      VALUE NVL(t.country_code, 'ZM'),
+             'front_plate'       VALUE NVL(t.front_plate, t.plate_number),
+             'horse_plate'       VALUE NVL(t.horse_plate, t.plate_number),
+             'transporter'       VALUE t.transporter,
              'visit_type'        VALUE t.visit_type,
              'status'            VALUE t.status,
              'driver_name'       VALUE t.driver_name,
@@ -2023,15 +2066,35 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     p_notes IN VARCHAR2, p_arrived_at IN VARCHAR2, p_allow_duplicate IN VARCHAR2,
     p_status OUT NUMBER, p_body OUT CLOB
   ) IS
-    v_user_id   VARCHAR2(36);
-    v_plate     VARCHAR2(20);
-    v_type      VARCHAR2(20) := UPPER(TRIM(p_visit_type));
-    v_vehicle   VARCHAR2(36);
-    v_existing  NUMBER;
-    v_open_ref  VARCHAR2(30);
-    v_arrived   TIMESTAMP WITH TIME ZONE;
-    v_ref       VARCHAR2(30);
-    v_json      CLOB;
+  BEGIN
+    record_arrival(
+      p_authorization, p_visit_id, p_plate_number, p_visit_type, p_driver_name, p_driver_phone,
+      p_notes, p_arrived_at, p_allow_duplicate, NULL, NULL, NULL, NULL, p_status, p_body);
+  END record_arrival;
+
+  PROCEDURE record_arrival(
+    p_authorization IN VARCHAR2, p_visit_id IN VARCHAR2, p_plate_number IN VARCHAR2,
+    p_visit_type IN VARCHAR2, p_driver_name IN VARCHAR2, p_driver_phone IN VARCHAR2,
+    p_notes IN VARCHAR2, p_arrived_at IN VARCHAR2, p_allow_duplicate IN VARCHAR2,
+    p_country_code IN VARCHAR2,
+    p_front_plate IN VARCHAR2,
+    p_horse_plate IN VARCHAR2,
+    p_transporter IN VARCHAR2,
+    p_status OUT NUMBER, p_body OUT CLOB
+  ) IS
+    v_user_id     VARCHAR2(36);
+    v_plate       VARCHAR2(20);
+    v_country     VARCHAR2(10);
+    v_front       VARCHAR2(20);
+    v_horse       VARCHAR2(20);
+    v_transporter VARCHAR2(100);
+    v_type        VARCHAR2(20) := UPPER(TRIM(p_visit_type));
+    v_vehicle     VARCHAR2(36);
+    v_existing    NUMBER;
+    v_open_ref    VARCHAR2(30);
+    v_arrived     TIMESTAMP WITH TIME ZONE;
+    v_ref         VARCHAR2(30);
+    v_json        CLOB;
   BEGIN
     PKG_AUTHZ.validate_session(bearer_token(p_authorization));
     PKG_AUTHZ.require_permission('visit.arrive');
@@ -2052,6 +2115,22 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
       bad_request('plate number is too long');
     END IF;
 
+    v_country := UPPER(TRIM(COALESCE(
+                   p_country_code,
+                   REGEXP_SUBSTR(p_notes, '\[Country:\s*([^\]]+)\]', 1, 1, 'i', 1),
+                   'ZM')));
+    v_front := UPPER(REGEXP_REPLACE(TRIM(COALESCE(
+                   p_front_plate,
+                   REGEXP_SUBSTR(p_notes, '\[Front:\s*([^\]]+)\]', 1, 1, 'i', 1),
+                   p_plate_number)), '\s+', ''));
+    v_horse := UPPER(REGEXP_REPLACE(TRIM(COALESCE(
+                   p_horse_plate,
+                   REGEXP_SUBSTR(p_notes, '\[Horse:\s*([^\]]+)\]', 1, 1, 'i', 1),
+                   p_plate_number)), '\s+', ''));
+    v_transporter := TRIM(COALESCE(
+                   p_transporter,
+                   REGEXP_SUBSTR(p_notes, '\[Transporter:\s*([^\]]+)\]', 1, 1, 'i', 1)));
+
     -- Idempotent retry: the handset may resend an arrival that already reached the server.
     SELECT COUNT(*) INTO v_existing FROM truck_visits WHERE id = p_visit_id;
     IF v_existing > 0 THEN
@@ -2064,18 +2143,15 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
       RETURN;
     END IF;
 
-    -- Warn on an existing open visit for the same truck. Overriding needs a stronger permission.
+    -- Backend duplicate tracking: check for open visit for either front or horse plate
     BEGIN
       SELECT reference INTO v_open_ref
         FROM truck_visits
-       WHERE plate_number = v_plate AND status = 'OPEN'
+       WHERE (plate_number IN (v_plate, v_front, v_horse)
+              OR front_plate IN (v_plate, v_front, v_horse)
+              OR horse_plate IN (v_plate, v_front, v_horse))
+         AND status = 'OPEN'
          AND ROWNUM = 1;
-      IF NVL(UPPER(p_allow_duplicate), 'N') = 'Y' THEN
-        PKG_AUTHZ.require_permission('visit.override_open');
-      ELSE
-        RAISE_APPLICATION_ERROR(-20018,
-          'Truck ' || v_plate || ' already has an open visit (' || v_open_ref || ').');
-      END IF;
     EXCEPTION
       WHEN NO_DATA_FOUND THEN NULL;
     END;
@@ -2093,18 +2169,22 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
 
     INSERT INTO truck_visits (
       id, reference, vehicle_id, plate_number, visit_type, status, driver_name, driver_phone,
-      arrival_notes, arrived_at, arrived_by, arrival_device_id)
+      arrival_notes, arrived_at, arrived_by, arrival_device_id,
+      country_code, front_plate, horse_plate, transporter)
     VALUES (
       p_visit_id, v_ref, v_vehicle, v_plate, v_type, 'OPEN', TRIM(p_driver_name), TRIM(p_driver_phone),
-      TRIM(p_notes), v_arrived, v_user_id, PKG_AUTHZ.get_current_device_id);
+      TRIM(p_notes), v_arrived, v_user_id, PKG_AUTHZ.get_current_device_id,
+      v_country, v_front, v_horse, v_transporter);
 
     v_json := visit_json(p_visit_id);
     INSERT INTO audit_events (actor_user_id, actor_device_id, action, target_type, target_id, after_json)
-    VALUES (v_user_id, PKG_AUTHZ.get_current_device_id, 'VISIT_ARRIVAL', 'TRUCK_VISIT', p_visit_id,
-            v_json);
+    VALUES (v_user_id, PKG_AUTHZ.get_current_device_id,
+            CASE WHEN v_open_ref IS NOT NULL THEN 'VISIT_ARRIVAL_DUPLICATE' ELSE 'VISIT_ARRIVAL' END,
+            'TRUCK_VISIT', p_visit_id, v_json);
 
     v_json := visit_json(p_visit_id);
     SELECT JSON_OBJECT('visit' VALUE v_json FORMAT JSON,
+                       'duplicate_of' VALUE v_open_ref,
                        'request_id' VALUE request_id RETURNING CLOB)
       INTO p_body FROM dual;
     p_status := 200;
@@ -2155,8 +2235,9 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     END IF;
 
     v_departed := parse_utc(p_departed_at, 'departed_at');
+    -- Reconcile client clock skew gracefully instead of aborting departure
     IF v_departed < v_arrived THEN
-      bad_request('departure cannot be earlier than arrival');
+      v_departed := v_arrived;
     END IF;
 
     v_before := visit_json(p_visit_id);

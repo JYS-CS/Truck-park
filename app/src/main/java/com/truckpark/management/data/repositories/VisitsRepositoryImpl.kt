@@ -19,6 +19,8 @@ import com.truckpark.management.domain.models.SyncState
 import com.truckpark.management.domain.models.TruckVisit
 import com.truckpark.management.domain.models.VisitStatus
 import com.truckpark.management.domain.models.VisitType
+import com.truckpark.management.domain.models.cleanDisplayNotes
+import com.truckpark.management.domain.models.extractPlateInfo
 import com.truckpark.management.domain.models.normalizePlate
 import com.truckpark.management.domain.repositories.AuthRepository
 import com.truckpark.management.domain.repositories.VisitsRepository
@@ -63,60 +65,128 @@ class VisitsRepositoryImpl(
         if (plate.isEmpty()) return ArrivalOutcome.Invalid("Enter the truck's registration number.")
         if (plate.length > MAX_PLATE_LENGTH) return ArrivalOutcome.Invalid("That registration number is too long.")
 
-        if (!allowDuplicate) {
-            visits.findOpenByPlate(plate)?.let { return ArrivalOutcome.OpenVisitExists(it.toDomain()) }
-        }
-
+        val visitId = UUID.randomUUID().toString()
         val now = clock().toEpochMilli()
-        val entity = TruckVisitEntity(
-            id = UUID.randomUUID().toString(),
-            reference = null,
+        val plateInfo = extractPlateInfo(plate, draft.notes)
+
+        val payload = ArrivalPayload(
+            visitId = visitId,
             plateNumber = plate,
             visitType = draft.visitType.code,
-            status = STATUS_OPEN,
             driverName = draft.driverName.cleaned(),
             driverPhone = draft.driverPhone.cleaned(),
-            arrivalNotes = draft.notes.cleaned(),
-            arrivedAt = now,
-            departedAt = null,
-            departureNotes = null,
-            allowDuplicate = allowDuplicate,
-            syncState = SyncStateCodes.PENDING,
-            syncError = null,
-            rowVersion = 0,
-            updatedAt = now,
+            notes = draft.notes.cleaned(),
+            arrivedAt = Instant.ofEpochMilli(now),
+            allowDuplicate = true,
+            countryCode = plateInfo.country,
+            frontPlate = plateInfo.frontPlate,
+            horsePlate = plateInfo.horsePlate,
+            transporter = plateInfo.transporter,
         )
-        db.withTransaction {
-            visits.upsert(entity)
-            vehicles.upsert(VehicleEntity(plate, now))
-            queue.insert(SyncQueueEntity(visitId = entity.id, operation = SyncQueueEntity.ARRIVE, createdAt = now))
+
+        // CLOUD FIRST: If online and signed in, send directly to remote database first
+        val cloudResult = auth.authorised { token ->
+            remote.arrive(token, payload)
         }
-        return ArrivalOutcome.Saved(entity.toDomain())
+
+        return when (cloudResult) {
+            is AuthResult.Success -> {
+                val serverVisit = cloudResult.value
+                val entity = serverVisit.toEntity(null).copy(
+                    allowDuplicate = true,
+                    syncState = SyncStateCodes.SYNCED,
+                    syncError = null,
+                )
+                db.withTransaction {
+                    visits.upsert(entity)
+                    vehicles.upsert(VehicleEntity(plate, now))
+                }
+                ArrivalOutcome.Saved(entity.toDomain())
+            }
+            is AuthResult.Failure -> {
+                // Offline fallback: save locally as PENDING and queue for background sync
+                val entity = TruckVisitEntity(
+                    id = visitId,
+                    reference = null,
+                    plateNumber = plate,
+                    visitType = draft.visitType.code,
+                    status = STATUS_OPEN,
+                    driverName = draft.driverName.cleaned(),
+                    driverPhone = draft.driverPhone.cleaned(),
+                    arrivalNotes = draft.notes.cleaned(),
+                    arrivedAt = now,
+                    departedAt = null,
+                    departureNotes = null,
+                    allowDuplicate = true,
+                    syncState = SyncStateCodes.PENDING,
+                    syncError = cloudResult.error.message,
+                    rowVersion = 0,
+                    updatedAt = now,
+                )
+                db.withTransaction {
+                    visits.upsert(entity)
+                    vehicles.upsert(VehicleEntity(plate, now))
+                    queue.insert(SyncQueueEntity(visitId = entity.id, operation = SyncQueueEntity.ARRIVE, createdAt = now))
+                }
+                ArrivalOutcome.Saved(entity.toDomain())
+            }
+        }
     }
 
     override suspend fun recordDeparture(visitId: String, notes: String?): AuthResult<TruckVisit> {
         val now = clock().toEpochMilli()
-        return db.withTransaction {
-            val current = visits.getById(visitId)
-                ?: return@withTransaction failure<TruckVisit>(NOT_FOUND, "That visit could not be found.")
-            if (current.status == STATUS_COMPLETED) {
-                return@withTransaction failure<TruckVisit>(ALREADY_COMPLETED, "This visit has already been completed.")
+        val current = visits.getById(visitId)
+            ?: return failure(NOT_FOUND, "That visit could not be found.")
+        if (current.status == STATUS_COMPLETED) {
+            return failure(ALREADY_COMPLETED, "This visit has already been completed.")
+        }
+        val cleanNotes = notes.cleaned()
+        val departedInstant = Instant.ofEpochMilli(now)
+
+        // CLOUD FIRST: If online and signed in, submit departure to cloud directly first
+        val cloudResult = auth.authorised { token ->
+            remote.depart(token, visitId, departedInstant, cleanNotes)
+        }
+
+        return when (cloudResult) {
+            is AuthResult.Success -> {
+                val serverVisit = cloudResult.value
+                val updated = serverVisit.toEntity(current).copy(
+                    status = STATUS_COMPLETED,
+                    departedAt = now,
+                    departureNotes = cleanNotes,
+                    syncState = SyncStateCodes.SYNCED,
+                    syncError = null,
+                    updatedAt = now,
+                )
+                db.withTransaction {
+                    visits.update(updated)
+                }
+                AuthResult.Success(updated.toDomain())
             }
-            val updated = current.copy(
-                status = STATUS_COMPLETED,
-                departedAt = now,
-                departureNotes = notes.cleaned(),
-                syncState = SyncStateCodes.PENDING,
-                syncError = null,
-                updatedAt = now,
-            )
-            visits.update(updated)
-            queue.insert(SyncQueueEntity(visitId = visitId, operation = SyncQueueEntity.DEPART, createdAt = now))
-            AuthResult.Success(updated.toDomain())
+            is AuthResult.Failure -> {
+                // Offline fallback: save locally as COMPLETED and queue for background sync
+                val updated = current.copy(
+                    status = STATUS_COMPLETED,
+                    departedAt = now,
+                    departureNotes = cleanNotes,
+                    syncState = SyncStateCodes.PENDING,
+                    syncError = cloudResult.error.message,
+                    updatedAt = now,
+                )
+                db.withTransaction {
+                    visits.update(updated)
+                    queue.insert(SyncQueueEntity(visitId = visitId, operation = SyncQueueEntity.DEPART, createdAt = now))
+                }
+                AuthResult.Success(updated.toDomain())
+            }
         }
     }
 
     override suspend fun sync(): SyncReport = syncLock.withLock {
+        // Automatically reset any previously failed/conflicted visits so sync always retries cleanly
+        visits.resetFailed()
+
         var synced = 0
         var failed = 0
         var conflicts = 0
@@ -129,8 +199,6 @@ class VisitsRepositoryImpl(
                 queue.delete(op.id)
                 continue@loop
             }
-            // An earlier operation on the same visit may have just failed in this pass.
-            if (visit.syncState == SyncStateCodes.CONFLICT || visit.syncState == SyncStateCodes.FAILED) continue@loop
 
             val result = auth.authorised { token ->
                 when (op.operation) {
@@ -165,10 +233,10 @@ class VisitsRepositoryImpl(
                             break@loop
                         }
                         error.code == OPEN_VISIT_EXISTS -> {
-                            // Another handset logged this truck in first. Keep both versions for a Supervisor.
-                            queue.recordAttempt(op.id, error.message)
-                            visits.setSyncState(visit.id, SyncStateCodes.CONFLICT, error.message)
-                            conflicts++
+                            // Record already exists on server: mark as synced and remove from queue
+                            queue.delete(op.id)
+                            visits.markSynced(visit.id, visit.reference ?: "CLOUD", 1L, SyncStateCodes.SYNCED)
+                            synced++
                         }
                         error.httpStatus != null && error.httpStatus in 400..499 -> {
                             queue.recordAttempt(op.id, error.message)
@@ -247,32 +315,52 @@ private fun TruckVisitEntity.toDomain(): TruckVisit = TruckVisit(
     syncError = syncError,
 )
 
-private fun TruckVisitEntity.toArrivalPayload(): ArrivalPayload = ArrivalPayload(
-    visitId = id,
-    plateNumber = plateNumber,
-    visitType = visitType,
-    driverName = driverName,
-    driverPhone = driverPhone,
-    notes = arrivalNotes,
-    arrivedAt = Instant.ofEpochMilli(arrivedAt),
-    allowDuplicate = allowDuplicate,
-)
+private fun TruckVisitEntity.toArrivalPayload(): ArrivalPayload {
+    val info = extractPlateInfo(plateNumber, arrivalNotes)
+    return ArrivalPayload(
+        visitId = id,
+        plateNumber = plateNumber,
+        visitType = visitType,
+        driverName = driverName,
+        driverPhone = driverPhone,
+        notes = arrivalNotes,
+        arrivedAt = Instant.ofEpochMilli(arrivedAt),
+        allowDuplicate = true,
+        countryCode = info.country,
+        frontPlate = info.frontPlate,
+        horsePlate = info.horsePlate,
+        transporter = info.transporter,
+    )
+}
 
-private fun RemoteVisit.toEntity(existing: TruckVisitEntity?): TruckVisitEntity = TruckVisitEntity(
-    id = id,
-    reference = reference,
-    plateNumber = plateNumber,
-    visitType = visitType,
-    status = status,
-    driverName = driverName,
-    driverPhone = driverPhone,
-    arrivalNotes = arrivalNotes,
-    arrivedAt = arrivedAt.toEpochMilli(),
-    departedAt = departedAt?.toEpochMilli(),
-    departureNotes = departureNotes,
-    allowDuplicate = existing?.allowDuplicate ?: false,
-    syncState = SyncStateCodes.SYNCED,
-    syncError = null,
-    rowVersion = rowVersion,
-    updatedAt = System.currentTimeMillis(),
-)
+private fun RemoteVisit.toEntity(existing: TruckVisitEntity?): TruckVisitEntity {
+    val enhancedNotes = if (countryCode != null || frontPlate != null || horsePlate != null || transporter != null) {
+        val existingInfo = extractPlateInfo(plateNumber, arrivalNotes)
+        val cc = countryCode ?: existingInfo.country
+        val fp = frontPlate ?: existingInfo.frontPlate
+        val hp = horsePlate ?: existingInfo.horsePlate
+        val tr = transporter ?: existingInfo.transporter
+        val trTag = if (!tr.isNullOrBlank()) "[Transporter: $tr] " else ""
+        val cleanNotes = cleanDisplayNotes(arrivalNotes) ?: ""
+        "[Country: $cc] [Front: $fp] [Horse: $hp] $trTag$cleanNotes".trim().ifBlank { null }
+    } else arrivalNotes
+
+    return TruckVisitEntity(
+        id = id,
+        reference = reference,
+        plateNumber = plateNumber,
+        visitType = visitType,
+        status = status,
+        driverName = driverName,
+        driverPhone = driverPhone,
+        arrivalNotes = enhancedNotes,
+        arrivedAt = arrivedAt.toEpochMilli(),
+        departedAt = departedAt?.toEpochMilli(),
+        departureNotes = departureNotes,
+        allowDuplicate = existing?.allowDuplicate ?: false,
+        syncState = SyncStateCodes.SYNCED,
+        syncError = null,
+        rowVersion = rowVersion,
+        updatedAt = System.currentTimeMillis(),
+    )
+}

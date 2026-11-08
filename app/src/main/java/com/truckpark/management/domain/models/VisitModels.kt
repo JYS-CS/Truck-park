@@ -78,3 +78,47 @@ fun normalizePlate(raw: String): String = raw.trim().uppercase().filterNot { it.
 
 const val MAX_PLATE_LENGTH = 20
 
+data class PlateInfo(
+    val country: String,
+    val frontPlate: String,
+    val horsePlate: String,
+    val transporter: String? = null,
+    val customPurpose: String? = null,
+)
+
+fun extractPlateInfo(plateNumber: String, arrivalNotes: String?): PlateInfo {
+    val notes = arrivalNotes ?: ""
+    val countryMatch = Regex("""\[Country:\s*([A-Za-z0-9]+)\]""").find(notes)
+        ?: Regex("""Country:\s*([A-Za-z0-9]+)""").find(notes)
+    val horseMatch = Regex("""\[Horse:\s*([^\]]+)\]""").find(notes)
+        ?: Regex("""Horse(?:\s*Plate)?:\s*([^\n|]+)""").find(notes)
+    val frontMatch = Regex("""\[Front:\s*([^\]]+)\]""").find(notes)
+        ?: Regex("""Front(?:\s*Plate)?:\s*([^\n|]+)""").find(notes)
+    val transporterMatch = Regex("""\[Transporter:\s*([^\]]+)\]""").find(notes)
+        ?: Regex("""Transporter:\s*([^\n|]+)""").find(notes)
+    val purposeMatch = Regex("""\[Purpose:\s*([^\]]+)\]""").find(notes)
+
+    val country = countryMatch?.groupValues?.get(1)?.trim()?.uppercase() ?: "ZM"
+    val front = frontMatch?.groupValues?.get(1)?.trim() ?: plateNumber
+    val horse = horseMatch?.groupValues?.get(1)?.trim() ?: plateNumber
+    val transporter = transporterMatch?.groupValues?.get(1)?.trim()
+    val purpose = purposeMatch?.groupValues?.get(1)?.trim()
+
+    return PlateInfo(country = country, frontPlate = front, horsePlate = horse, transporter = transporter, customPurpose = purpose)
+}
+
+fun cleanDisplayNotes(rawNotes: String?): String? {
+    if (rawNotes.isNullOrBlank()) return null
+    val stripped = rawNotes
+        .replace(Regex("""\[Country:\s*[^\]]+\]\s*"""), "")
+        .replace(Regex("""\[Horse:\s*[^\]]+\]\s*"""), "")
+        .replace(Regex("""\[Front:\s*[^\]]+\]\s*"""), "")
+        .replace(Regex("""\[Transporter:\s*[^\]]+\]\s*"""), "")
+        .replace(Regex("""\[Purpose:\s*[^\]]+\]\s*"""), "")
+        .replace(Regex("""Country:\s*[A-Za-z0-9]+\s*\|?\s*"""), "")
+        .replace(Regex("""Horse(?:\s*Plate)?:\s*[^\n|]+\s*\|?\s*"""), "")
+        .replace(Regex("""Front(?:\s*Plate)?:\s*[^\n|]+\s*\|?\s*"""), "")
+        .trim()
+    return stripped.ifBlank { null }
+}
+

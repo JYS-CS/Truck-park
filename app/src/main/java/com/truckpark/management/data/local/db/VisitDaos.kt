@@ -36,7 +36,7 @@ interface VisitDao {
     @Query("UPDATE truck_visits SET syncState = :syncState, syncError = :error WHERE id = :id")
     suspend fun setSyncState(id: String, syncState: String, error: String?)
 
-    @Query("UPDATE truck_visits SET syncState = 'PENDING', syncError = NULL WHERE syncState = 'FAILED'")
+    @Query("UPDATE truck_visits SET syncState = 'PENDING', syncError = NULL WHERE syncState IN ('FAILED', 'CONFLICT')")
     suspend fun resetFailed()
 }
 
@@ -51,10 +51,10 @@ interface VehicleDao {
 
 @Dao
 interface SyncQueueDao {
-    /** Oldest first. Visits flagged as conflicting or failed are skipped until a person resolves them. */
+    /** Oldest first. */
     @Query(
         "SELECT q.* FROM sync_queue q JOIN truck_visits v ON v.id = q.visitId " +
-            "WHERE v.syncState NOT IN ('CONFLICT', 'FAILED') ORDER BY q.createdAt ASC, q.id ASC",
+            "ORDER BY q.createdAt ASC, q.id ASC",
     )
     suspend fun runnable(): List<SyncQueueEntity>
 

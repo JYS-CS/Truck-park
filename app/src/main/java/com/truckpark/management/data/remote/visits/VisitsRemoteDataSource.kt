@@ -25,6 +25,10 @@ data class RemoteVisit(
     val departedAt: Instant?,
     val departureNotes: String?,
     val rowVersion: Long,
+    val countryCode: String? = null,
+    val frontPlate: String? = null,
+    val horsePlate: String? = null,
+    val transporter: String? = null,
 )
 
 data class ArrivalPayload(
@@ -36,6 +40,10 @@ data class ArrivalPayload(
     val notes: String?,
     val arrivedAt: Instant,
     val allowDuplicate: Boolean,
+    val countryCode: String? = null,
+    val frontPlate: String? = null,
+    val horsePlate: String? = null,
+    val transporter: String? = null,
 )
 
 interface VisitsRemoteDataSource {
@@ -61,8 +69,12 @@ class OrdsVisitsRemoteDataSource(
             payload.driverName?.let { put("driver_name", it) }
             payload.driverPhone?.let { put("driver_phone", it) }
             payload.notes?.let { put("notes", it) }
-            put("arrived_at", payload.arrivedAt.toString())
+            put("arrived_at", payload.arrivedAt.truncatedTo(java.time.temporal.ChronoUnit.SECONDS).toString())
             put("allow_duplicate", if (payload.allowDuplicate) "Y" else "N")
+            payload.countryCode?.let { put("country_code", it) }
+            payload.frontPlate?.let { put("front_plate", it) }
+            payload.horsePlate?.let { put("horse_plate", it) }
+            payload.transporter?.let { put("transporter", it) }
         },
         bearer = sessionToken,
     ) { json -> parseVisit(json.getJSONObject("visit")) }
@@ -75,7 +87,7 @@ class OrdsVisitsRemoteDataSource(
     ): AuthResult<RemoteVisit> = call(
         path = "visits/${visitId.trim()}/depart",
         body = JSONObject().apply {
-            put("departed_at", departedAt.toString())
+            put("departed_at", departedAt.truncatedTo(java.time.temporal.ChronoUnit.SECONDS).toString())
             notes?.let { put("notes", it) }
         },
         bearer = sessionToken,
@@ -148,6 +160,10 @@ class OrdsVisitsRemoteDataSource(
         departedAt = json.optNullableString("departed_at")?.let { Instant.parse(it) },
         departureNotes = json.optNullableString("departure_notes"),
         rowVersion = json.optLong("row_version", 1L),
+        countryCode = json.optNullableString("country_code"),
+        frontPlate = json.optNullableString("front_plate"),
+        horsePlate = json.optNullableString("horse_plate"),
+        transporter = json.optNullableString("transporter"),
     )
 
     private fun JSONObject.optNullableString(key: String): String? {
