@@ -1,5 +1,7 @@
 package com.truckpark.management.feature.ocr
 
+import android.graphics.Bitmap
+import android.graphics.Matrix
 import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
@@ -11,6 +13,28 @@ import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 enum class OcrScanMode {
     PLATE,
     TRANSPORTER,
+}
+
+/** Rectangle expressed as fractions (0..1) of the camera preview. */
+data class NormalizedRect(
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float,
+) {
+    val width: Float get() = right - left
+    val height: Float get() = bottom - top
+
+    companion object {
+        /** Box of [width] x [height] centred on ([cx], [cy]), shifted back inside 0..1 if needed. */
+        fun centered(cx: Float, cy: Float, width: Float, height: Float): NormalizedRect {
+            val w = width.coerceIn(0.1f, 1f)
+            val h = height.coerceIn(0.05f, 1f)
+            val left = (cx - w / 2f).coerceIn(0f, 1f - w)
+            val top = (cy - h / 2f).coerceIn(0f, 1f - h)
+            return NormalizedRect(left, top, left + w, top + h)
+        }
+    }
 }
 
 data class OcrScanResult(
@@ -91,23 +115,108 @@ class PlateTextAnalyzer(
         isConfirmed = false
     }
 
+    /**
+     * Region the user placed on screen, as fractions (0..1) of the camera preview.
+     * Only pixels inside this box are ever sent to the text recogniser.
+     */
+    @Volatile
+    var cropRegion: NormalizedRect = NormalizedRect.centered(0.5f, 0.5f, 0.84f, 0.22f)
+
     @androidx.annotation.OptIn(ExperimentalGetImage::class)
     override fun analyze(imageProxy: ImageProxy) {
-        val mediaImage = imageProxy.image
-        if (mediaImage == null || isConfirmed) {
+        if (isConfirmed) {
             imageProxy.close()
             return
         }
 
-        val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+        val cropped = try {
+            buildCroppedBitmap(imageProxy)
+        } catch (e: Exception) {
+            null
+        }
+        if (cropped == null) {
+            imageProxy.close()
+            return
+        }
 
-        recognizer.process(image)
+        recognizer.process(InputImage.fromBitmap(cropped, 0))
             .addOnSuccessListener { visionText ->
                 processVisionText(visionText)
             }
             .addOnCompleteListener {
+                cropped.recycle()
                 imageProxy.close()
             }
+    }
+
+    /**
+     * Applies the camera viewport crop, rotates the frame upright, then cuts out exactly
+     * the user's box so text outside it can never be recognised.
+     */
+    private fun buildCroppedBitmap(imageProxy: ImageProxy): Bitmap? {
+        val full = imageProxy.toBitmap()
+        var bitmap = full
+
+        val crop = imageProxy.cropRect
+        val isFullBuffer = full.width == imageProxy.width && full.height == imageProxy.height
+        if (isFullBuffer && (crop.width() < full.width || crop.height() < full.height) &&
+            crop.width() > 0 && crop.height() > 0
+        ) {
+            bitmap = Bitmap.createBitmap(full, crop.left, crop.top, crop.width(), crop.height())
+        }
+
+        val rotation = imageProxy.imageInfo.rotationDegrees
+        if (rotation != 0) {
+            val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
+            bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+        }
+
+        val region = cropRegion
+        val left = (region.left * bitmap.width).toInt().coerceIn(0, bitmap.width - 1)
+        val top = (region.top * bitmap.height).toInt().coerceIn(0, bitmap.height - 1)
+        val right = (region.right * bitmap.width).toInt().coerceIn(left + 1, bitmap.width)
+        val bottom = (region.bottom * bitmap.height).toInt().coerceIn(top + 1, bitmap.height)
+        return Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
+    }
+
+    /**
+     * Collects plate candidates from lines, single words, adjacent word pairs and adjacent
+     * line pairs (plates are often split as "BAH" / "1234"), then returns the one whose text
+     * is largest in the frame, since the plate the user framed dominates the box.
+     */
+    private fun bestPlateIn(visionText: Text): String? {
+        var best: String? = null
+        var bestHeight = -1
+
+        fun consider(raw: String, height: Int) {
+            val normalized = PlateOcrNormalizer.normalizeCandidate(raw)
+            if (PlateOcrNormalizer.isValidPlate(normalized) && height > bestHeight) {
+                best = normalized
+                bestHeight = height
+            }
+        }
+
+        val lines = visionText.textBlocks.flatMap { it.lines }
+        for ((index, line) in lines.withIndex()) {
+            val lineHeight = line.boundingBox?.height() ?: 0
+            consider(line.text, lineHeight)
+
+            val elements = line.elements
+            for ((i, element) in elements.withIndex()) {
+                val h = element.boundingBox?.height() ?: lineHeight
+                consider(element.text, h)
+                if (i + 1 < elements.size) {
+                    consider(element.text + elements[i + 1].text, h)
+                }
+            }
+
+            if (index + 1 < lines.size) {
+                val next = lines[index + 1]
+                val nextHeight = next.boundingBox?.height() ?: 0
+                consider(line.text + next.text, minOf(lineHeight, nextHeight))
+            }
+        }
+        return best
     }
 
     private fun processVisionText(visionText: Text) {
@@ -146,28 +255,11 @@ class PlateTextAnalyzer(
                     }
                 }
                 if (bestPlateCandidate != null) break
-            } else {
-                // Inspect individual lines for plates
-                for (line in block.lines) {
-                    val normalizedLine = PlateOcrNormalizer.normalizeCandidate(line.text)
-                    if (PlateOcrNormalizer.isValidPlate(normalizedLine)) {
-                        bestPlateCandidate = normalizedLine
-                        break
-                    }
-
-                    // Check individual words in line
-                    for (element in line.elements) {
-                        val normalizedElement = PlateOcrNormalizer.normalizeCandidate(element.text)
-                        if (PlateOcrNormalizer.isValidPlate(normalizedElement)) {
-                            bestPlateCandidate = normalizedElement
-                            break
-                        }
-                    }
-                    if (bestPlateCandidate != null) break
-                }
-                // Stop on first matching plate so a lower/secondary plate in the frame doesn't overwrite it
-                if (bestPlateCandidate != null) break
             }
+        }
+
+        if (scanMode == OcrScanMode.PLATE) {
+            bestPlateCandidate = bestPlateIn(visionText)
         }
 
         val allDetected = fullTextBuilder.toString().trim()

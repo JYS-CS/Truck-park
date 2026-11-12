@@ -8,9 +8,15 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
+import androidx.camera.core.UseCaseGroup
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -45,18 +51,26 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size as ComposeSize
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
+import androidx.core.view.doOnLayout
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.truckpark.management.data.local.TransporterStore
 import java.util.concurrent.Executors
@@ -102,6 +116,19 @@ fun PlateScannerDialog(
     val knownTransporters = remember { TransporterStore.getKnownTransporters(context) }
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
 
+    // User-placed crop box (fractions of the preview). Only this region is analysed.
+    var cropRegion by remember(scanMode) {
+        mutableStateOf(
+            NormalizedRect.centered(
+                cx = 0.5f,
+                cy = 0.38f,
+                width = 0.84f,
+                height = if (scanMode == OcrScanMode.TRANSPORTER) 0.30f else 0.20f,
+            )
+        )
+    }
+    var containerSize by remember { mutableStateOf(IntSize.Zero) }
+
     val analyzer = remember(scanMode) {
         PlateTextAnalyzer(
             scanMode = scanMode,
@@ -111,7 +138,18 @@ fun PlateScannerDialog(
                 detectedPlateResult = result
                 isAnalyzing = false
             },
+        ).also { it.cropRegion = cropRegion }
+    }
+
+    fun moveCropTo(offset: Offset) {
+        if (containerSize.width <= 0 || containerSize.height <= 0) return
+        cropRegion = NormalizedRect.centered(
+            cx = offset.x / containerSize.width,
+            cy = offset.y / containerSize.height,
+            width = cropRegion.width,
+            height = cropRegion.height,
         )
+        analyzer.cropRegion = cropRegion
     }
 
     LaunchedEffect(Unit) {
@@ -145,36 +183,53 @@ fun PlateScannerDialog(
                     factory = { ctx ->
                         val previewView = PreviewView(ctx).apply {
                             implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                            scaleType = PreviewView.ScaleType.FILL_CENTER
                         }
 
                         val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
                         cameraProviderFuture.addListener({
-                            val cameraProvider = cameraProviderFuture.get()
+                            // Wait for layout so the viewport (what the user actually sees) is known.
+                            previewView.doOnLayout {
+                                val cameraProvider = cameraProviderFuture.get()
 
-                            val preview = Preview.Builder().build().also {
-                                it.setSurfaceProvider(previewView.surfaceProvider)
-                            }
+                                val preview = Preview.Builder().build().also {
+                                    it.setSurfaceProvider(previewView.surfaceProvider)
+                                }
 
-                            val imageAnalysis = ImageAnalysis.Builder()
-                                .setTargetResolution(Size(1280, 720))
-                                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                                .build()
+                                val imageAnalysis = ImageAnalysis.Builder()
+                                    .setResolutionSelector(
+                                        ResolutionSelector.Builder()
+                                            .setResolutionStrategy(
+                                                ResolutionStrategy(
+                                                    Size(1920, 1080),
+                                                    ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
+                                                )
+                                            )
+                                            .build()
+                                    )
+                                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                                    .build()
 
-                            imageAnalysis.setAnalyzer(cameraExecutor, analyzer)
+                                imageAnalysis.setAnalyzer(cameraExecutor, analyzer)
 
-                            val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+                                // Share one viewport so analysis frames cover exactly the on-screen area;
+                                // the on-screen crop box then maps 1:1 onto the analysed pixels.
+                                val groupBuilder = UseCaseGroup.Builder()
+                                    .addUseCase(preview)
+                                    .addUseCase(imageAnalysis)
+                                previewView.viewPort?.let { groupBuilder.setViewPort(it) }
 
-                            try {
-                                cameraProvider.unbindAll()
-                                val cam = cameraProvider.bindToLifecycle(
-                                    lifecycleOwner,
-                                    cameraSelector,
-                                    preview,
-                                    imageAnalysis
-                                )
-                                cameraControl = cam.cameraControl
-                            } catch (e: Exception) {
-                                e.printStackTrace()
+                                try {
+                                    cameraProvider.unbindAll()
+                                    val cam = cameraProvider.bindToLifecycle(
+                                        lifecycleOwner,
+                                        CameraSelector.DEFAULT_BACK_CAMERA,
+                                        groupBuilder.build(),
+                                    )
+                                    cameraControl = cam.cameraControl
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                }
                             }
                         }, ContextCompat.getMainExecutor(ctx))
 
@@ -182,12 +237,41 @@ fun PlateScannerDialog(
                     }
                 )
 
-                // Darkened scanning vignette overlay
-                Box(
+                // Dimmed scrim with a clear window over the user's crop box; tap or drag to move it.
+                Canvas(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.45f))
-                )
+                        .onSizeChanged { containerSize = it }
+                        .pointerInput(Unit) {
+                            detectTapGestures { offset -> moveCropTo(offset) }
+                        }
+                        .pointerInput(Unit) {
+                            detectDragGestures(
+                                onDragStart = { offset -> moveCropTo(offset) },
+                                onDrag = { change, _ ->
+                                    change.consume()
+                                    moveCropTo(change.position)
+                                },
+                            )
+                        }
+                ) {
+                    val l = cropRegion.left * size.width
+                    val t = cropRegion.top * size.height
+                    val r = cropRegion.right * size.width
+                    val b = cropRegion.bottom * size.height
+                    val scrim = Color.Black.copy(alpha = 0.55f)
+                    drawRect(scrim, topLeft = Offset(0f, 0f), size = ComposeSize(size.width, t))
+                    drawRect(scrim, topLeft = Offset(0f, b), size = ComposeSize(size.width, size.height - b))
+                    drawRect(scrim, topLeft = Offset(0f, t), size = ComposeSize(l, b - t))
+                    drawRect(scrim, topLeft = Offset(r, t), size = ComposeSize(size.width - r, b - t))
+                    drawRoundRect(
+                        color = if (detectedPlateResult != null) Color(0xFF10B981) else Color(0xFF38BDF8),
+                        topLeft = Offset(l, t),
+                        size = ComposeSize(r - l, b - t),
+                        cornerRadius = CornerRadius(16.dp.toPx()),
+                        style = Stroke(width = 2.dp.toPx()),
+                    )
+                }
 
                 // Viewfinder / Reticle Frame
                 Column(
@@ -235,7 +319,7 @@ fun PlateScannerDialog(
                                     )
                                 )
                                 Text(
-                                    text = "Align inside viewfinder",
+                                    text = "Tap to place the box on the plate",
                                     style = MaterialTheme.typography.bodySmall.copy(
                                         fontSize = 11.sp,
                                         color = Color.White.copy(alpha = 0.7f)
@@ -284,64 +368,6 @@ fun PlateScannerDialog(
                         }
                     }
 
-                    // Central Target Reticle Box
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(130.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .border(
-                                BorderStroke(
-                                    2.dp,
-                                    if (detectedPlateResult != null) Color(0xFF10B981)
-                                    else Color(0xFF38BDF8).copy(alpha = 0.85f)
-                                ),
-                                RoundedCornerShape(16.dp)
-                            )
-                            .background(
-                                if (detectedPlateResult != null) Color(0xFF10B981).copy(alpha = 0.12f)
-                                else Color.Transparent
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (detectedPlateResult == null) {
-                            Text(
-                                text = if (scanMode == OcrScanMode.TRANSPORTER) "POINT AT TRANSPORTER / CARRIER" else "POINT AT LICENSE PLATE",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White.copy(alpha = 0.7f),
-                                    letterSpacing = 1.2.sp
-                                )
-                            )
-                        } else {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Text(
-                                    text = detectedPlateResult?.plateNumber.orEmpty(),
-                                    style = MaterialTheme.typography.headlineMedium.copy(
-                                        fontWeight = FontWeight.ExtraBold,
-                                        fontFamily = FontFamily.Monospace,
-                                        color = Color.White,
-                                        letterSpacing = 2.sp
-                                    )
-                                )
-                                detectedPlateResult?.matchedCarrier?.let { carrier ->
-                                    if (scanMode != OcrScanMode.TRANSPORTER) {
-                                        Text(
-                                            text = "Carrier: $carrier",
-                                            style = MaterialTheme.typography.labelSmall.copy(
-                                                fontWeight = FontWeight.Bold,
-                                                color = Color(0xFF10B981)
-                                            )
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-
                     // Bottom Floating Action Card
                     Column(
                         modifier = Modifier
@@ -361,6 +387,26 @@ fun PlateScannerDialog(
                                     color = Color(0xFF10B981)
                                 )
                             )
+                            Text(
+                                text = detectedPlateResult?.plateNumber.orEmpty(),
+                                style = MaterialTheme.typography.headlineMedium.copy(
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = Color.White,
+                                    letterSpacing = 2.sp
+                                )
+                            )
+                            detectedPlateResult?.matchedCarrier?.let { carrier ->
+                                if (scanMode != OcrScanMode.TRANSPORTER) {
+                                    Text(
+                                        text = "Carrier: $carrier",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF10B981)
+                                        )
+                                    )
+                                }
+                            }
 
                             // Confirm & Apply Scanned Result
                             Box(
@@ -422,13 +468,24 @@ fun PlateScannerDialog(
                                     color = Color(0xFF38BDF8)
                                 )
                                 Text(
-                                    text = "Scanning $targetLabel...",
+                                    text = "Scanning only inside the box...",
                                     style = MaterialTheme.typography.bodySmall.copy(
                                         fontWeight = FontWeight.Medium,
                                         color = Color.White.copy(alpha = 0.85f)
                                     )
                                 )
                             }
+                            Text(
+                                text = if (scanMode == OcrScanMode.TRANSPORTER) {
+                                    "Tap or drag to place the box on the transporter name"
+                                } else {
+                                    "Tap or drag to place the box exactly on the plate"
+                                },
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = Color.White.copy(alpha = 0.6f),
+                                    textAlign = TextAlign.Center
+                                )
+                            )
                         }
                     }
                 }
