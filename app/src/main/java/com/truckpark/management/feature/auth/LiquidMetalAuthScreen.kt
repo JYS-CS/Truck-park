@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -94,6 +96,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.truckpark.management.R
@@ -538,49 +541,69 @@ fun LiquidMetalAuthScreen(
     val scrollState = rememberScrollState()
 
     AppBackground {
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 20.dp, vertical = 16.dp),
-            contentAlignment = Alignment.TopCenter,
+                .safeDrawingPadding(),
         ) {
-            Column(
+            val isCompactHeight = maxHeight < 660.dp
+            val isNarrowWidth = maxWidth < 360.dp
+            val logoSize = if (isCompactHeight) 72.dp else 100.dp
+            val wordmarkWidth = if (isCompactHeight) 150.dp else 180.dp
+            val headerGap = if (isCompactHeight) 8.dp else 12.dp
+            val sectionGap = if (isCompactHeight) 18.dp else 28.dp
+
+            Box(
                 modifier = Modifier
-                    .widthIn(max = 420.dp)
-                    .fillMaxWidth()
-                    .imePadding()
-                    .verticalScroll(scrollState),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Image(
-                    painter = painterResource(id = R.drawable.hibiscus_emblem_trans),
-                    contentDescription = "Hibiscus Logo",
-                    modifier = Modifier.size(100.dp),
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Image(
-                    painter = painterResource(
-                        id = if (dark) R.drawable.hibiscus_wordmark_trans else R.drawable.hibiscus_wordmark_light
+                    .fillMaxSize()
+                    .verticalScroll(scrollState)
+                    .padding(
+                        horizontal = if (isNarrowWidth) 16.dp else 20.dp,
+                        vertical = if (isCompactHeight) 12.dp else 16.dp,
                     ),
-                    contentDescription = "HIBISCUS",
-                    modifier = Modifier.width(180.dp),
-                )
+                contentAlignment = Alignment.TopCenter,
+            ) {
+                Column(
+                    modifier = Modifier
+                        .widthIn(max = 420.dp)
+                        .fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Image(
+                        painter = painterResource(id = R.drawable.hibiscus_emblem_trans),
+                        contentDescription = "Hibiscus Logo",
+                        modifier = Modifier.size(logoSize),
+                    )
 
-                Spacer(modifier = Modifier.height(28.dp))
+                    Spacer(modifier = Modifier.height(headerGap))
 
-                LiquidModeSwitch(
-                    selectedMode = mode,
-                    onModeSelected = { newMode ->
-                        if (mode != newMode) {
-                            resetState(newMode)
-                        }
-                    },
-                    dark = dark,
-                )
+                    Image(
+                        painter = painterResource(
+                            id = if (dark) R.drawable.hibiscus_wordmark_trans else R.drawable.hibiscus_wordmark_light
+                        ),
+                        contentDescription = "HIBISCUS",
+                        modifier = Modifier.width(wordmarkWidth),
+                    )
 
-                Spacer(modifier = Modifier.height(28.dp))
+                    Spacer(modifier = Modifier.height(sectionGap))
+
+                    LiquidModeSwitch(
+                        selectedMode = mode,
+                        onModeSelected = { newMode ->
+                            if (
+                                mode != newMode ||
+                                isResettingPassword ||
+                                isVerifyingPasswordReset ||
+                                isVerifyingRegistration ||
+                                isRegistrationPendingApproval
+                            ) {
+                                resetState(newMode)
+                            }
+                        },
+                        dark = dark,
+                    )
+
+                    Spacer(modifier = Modifier.height(sectionGap))
 
                 if (isRegistrationPendingApproval) {
                     RegistrationPendingApprovalCard(
@@ -1231,11 +1254,12 @@ fun LiquidMetalAuthScreen(
                                     bringIntoViewRequester = null,
                                 )
                             }
-
-                            Spacer(modifier = Modifier.height(24.dp))
                         }
                     }
                 }
+                }
+
+                    Spacer(modifier = Modifier.height(24.dp))
                 }
             }
         }
@@ -1264,12 +1288,15 @@ private fun LiquidModeSwitch(
 
     Box(
         modifier = Modifier
+            .widthIn(max = 360.dp)
+            .fillMaxWidth()
             .clip(CapsuleShape)
             .background(containerBg)
             .border(1.dp, containerBorder, CapsuleShape)
             .padding(4.dp),
     ) {
         Row(
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             ModeSwitchButton(
@@ -1277,6 +1304,7 @@ private fun LiquidModeSwitch(
                 isSelected = selectedMode == AuthMode.SignIn,
                 onClick = { onModeSelected(AuthMode.SignIn) },
                 dark = dark,
+                modifier = Modifier.weight(1f),
             )
             Spacer(modifier = Modifier.width(4.dp))
             ModeSwitchButton(
@@ -1284,6 +1312,7 @@ private fun LiquidModeSwitch(
                 isSelected = selectedMode == AuthMode.CreateAccount,
                 onClick = { onModeSelected(AuthMode.CreateAccount) },
                 dark = dark,
+                modifier = Modifier.weight(1f),
             )
         }
     }
@@ -1295,6 +1324,7 @@ private fun ModeSwitchButton(
     isSelected: Boolean,
     onClick: () -> Unit,
     dark: Boolean,
+    modifier: Modifier = Modifier,
 ) {
     val scheme = MaterialTheme.colorScheme
 
@@ -1319,7 +1349,7 @@ private fun ModeSwitchButton(
     }
 
     Box(
-        modifier = Modifier
+        modifier = modifier
             .clip(shape)
             .then(if (isSelected) Modifier.background(activeBg) else Modifier)
             .then(borderModifier)
@@ -1328,7 +1358,7 @@ private fun ModeSwitchButton(
                 indication = null,
                 onClick = onClick,
             )
-            .padding(horizontal = 24.dp, vertical = 10.dp),
+            .padding(horizontal = 12.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
@@ -1337,6 +1367,9 @@ private fun ModeSwitchButton(
             style = MaterialTheme.typography.labelLarge.copy(
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
             ),
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
@@ -1529,11 +1562,11 @@ private fun LiquidCapsuleInput(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(56.dp)
+                .heightIn(min = 56.dp)
                 .clip(CapsuleShape)
                 .background(capsuleBrush)
                 .border(if (errorMessage != null || isFocused) 1.5.dp else 1.dp, rimBorder, CapsuleShape)
-                .padding(horizontal = 20.dp),
+                .padding(horizontal = 20.dp, vertical = 10.dp),
             contentAlignment = Alignment.CenterStart,
         ) {
             Row(
@@ -1604,6 +1637,8 @@ private fun LiquidCapsuleInput(
                                 text = placeholder,
                                 color = scheme.onSurfaceVariant.copy(alpha = 0.65f),
                                 style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
                         }
                         innerTextField()
@@ -1702,7 +1737,7 @@ private fun LiquidTriggerButton(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(58.dp)
+            .heightIn(min = 56.dp)
             .then(
                 if (bringIntoViewRequester != null)
                     Modifier.bringIntoViewRequester(bringIntoViewRequester)
@@ -1746,7 +1781,8 @@ private fun LiquidTriggerButton(
                         cornerRadius = androidx.compose.ui.geometry.CornerRadius(999.dp.toPx()),
                     )
                 }
-            },
+            }
+            .padding(horizontal = 20.dp, vertical = 14.dp),
         contentAlignment = Alignment.Center,
     ) {
         if (isLoading) {

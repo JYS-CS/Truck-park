@@ -56,5 +56,6 @@ interface AuthRepository {
      */
     suspend fun <T> authorised(call: suspend (sessionToken: String) -> AuthResult<T>): AuthResult<T>
     fun hasStoredSession(): Boolean
+    fun getCachedUser(): AuthUser? = null
     fun getSessionRemainingMillis(): Long? = null
 }

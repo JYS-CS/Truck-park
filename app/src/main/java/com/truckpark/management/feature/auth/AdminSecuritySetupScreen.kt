@@ -18,8 +18,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -31,6 +32,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
@@ -72,6 +74,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.truckpark.management.R
@@ -184,7 +187,7 @@ fun AdminSecuritySetupScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .imePadding(),
+                .safeDrawingPadding(),
             contentAlignment = if (onVerifyPage) Alignment.Center else Alignment.TopCenter,
         ) {
             Column(
@@ -270,10 +273,11 @@ fun AdminSecuritySetupScreen(
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                         SetupActionButton(
-                            text = "Continue to Dashboard →",
+                            text = "Continue to Dashboard",
                             isEnabled = true,
                             isLoading = false,
                             dark = dark,
+                            trailingIcon = Icons.AutoMirrored.Filled.ArrowForward,
                             onClick = onSetupComplete,
                         )
                     } else {
@@ -420,10 +424,11 @@ fun AdminSecuritySetupScreen(
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                         SetupActionButton(
-                            text = "Continue to Dashboard →",
+                            text = "Continue to Dashboard",
                             isEnabled = true,
                             isLoading = false,
                             dark = dark,
+                            trailingIcon = Icons.AutoMirrored.Filled.ArrowForward,
                             onClick = onSetupComplete,
                         )
                     } else {
@@ -964,6 +969,7 @@ private fun SetupActionButton(
     isEnabled: Boolean,
     isLoading: Boolean,
     dark: Boolean,
+    trailingIcon: ImageVector? = null,
     onClick: () -> Unit,
 ) {
     val buttonBrush = if (isEnabled) {
@@ -979,11 +985,12 @@ private fun SetupActionButton(
             Brush.linearGradient(listOf(Color(0xFFE2E8F0), Color(0xFFCBD5E1)))
         }
     }
+    val contentColor = if (isEnabled) Color.White else if (dark) Color(0xFF64748B) else Color(0xFF94A3B8)
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(48.dp)
+            .heightIn(min = 48.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(buttonBrush)
             .clickable(
@@ -991,7 +998,8 @@ private fun SetupActionButton(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = onClick,
-            ),
+            )
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center,
     ) {
         if (isLoading) {
@@ -1001,11 +1009,28 @@ private fun SetupActionButton(
                 color = Color.White,
             )
         } else {
-            Text(
-                text = text,
-                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                color = if (isEnabled) Color.White else if (dark) Color(0xFF64748B) else Color(0xFF94A3B8),
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                Text(
+                    text = text,
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                    color = contentColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = if (trailingIcon != null) Modifier.weight(1f, fill = false) else Modifier,
+                )
+                if (trailingIcon != null) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Icon(
+                        imageVector = trailingIcon,
+                        contentDescription = null,
+                        tint = contentColor,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
         }
     }
 }

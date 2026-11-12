@@ -36,11 +36,25 @@ private val USER = AuthUser(
 
 private class MemoryStore(var session: AuthSession? = null) : SessionStore {
     val verified = mutableSetOf<String>()
+    var cachedUser: AuthUser? = null
+    var offlineValidUntil: Instant? = null
     var pendingCode: StoredPendingCode? = null
     var pendingSignUp: StoredPendingSignUp? = null
     override fun load() = session
     override fun save(session: AuthSession) { this.session = session }
-    override fun clear() { session = null }
+    override fun saveCachedUser(user: AuthUser?, offlineValidUntil: Instant?) {
+        cachedUser = user
+        if (offlineValidUntil != null) {
+            this.offlineValidUntil = offlineValidUntil
+        }
+    }
+    override fun loadCachedUser(): AuthUser? = cachedUser
+    override fun getOfflineValidUntil(): Instant? = offlineValidUntil
+    override fun clear() {
+        session = null
+        cachedUser = null
+        offlineValidUntil = null
+    }
     override fun markEmailVerified(email: String) { verified += email.trim().lowercase() }
     override fun unmarkEmailVerified(email: String) { verified -= email.trim().lowercase() }
     override fun isEmailVerified(email: String): Boolean = email.trim().lowercase() in verified
@@ -386,5 +400,38 @@ class AuthRepositoryImplTest {
         assertTrue(result is AuthResult.Failure)
         assertEquals("An account with this email already exists.", (result as AuthResult.Failure).error.message)
         assertEquals(0, remote.requestSignUpCodeCalls)
+    }
+
+    @Test
+    fun offlineAfterSignIn_preservesCachedUserAndSessionAcrossRepoRecreation() = runBlocking {
+        val initialRepo = repo()
+        val signInRes = initialRepo.signIn("ada@x.com", "pw")
+        assertTrue(signInRes is AuthResult.Success)
+        assertEquals(USER, initialRepo.getCachedUser())
+
+        // Simulate cold restart / repository recreation while offline (me() & refresh() fail with NETWORK)
+        val recreatedRepo = repo()
+        remote.meBehaviour = { AuthResult.Failure(AuthError(AuthError.NETWORK, "offline")) }
+        remote.refreshResult = AuthResult.Failure(AuthError(AuthError.NETWORK, "offline"))
+
+        val meResult = recreatedRepo.currentUser()
+        assertTrue(meResult is AuthResult.Failure)
+        assertEquals(AuthError.NETWORK, (meResult as AuthResult.Failure).error.code)
+        assertTrue(recreatedRepo.hasStoredSession())
+        assertEquals(USER, recreatedRepo.getCachedUser())
+    }
+
+    @Test
+    fun deviceRevokedOnMe_clearsStoredSessionAndCachedUser() = runBlocking {
+        val repository = repo()
+        repository.signIn("ada@x.com", "pw")
+        remote.meBehaviour = {
+            AuthResult.Failure(AuthError(AuthError.DEVICE_REVOKED, "revoked", 403))
+        }
+
+        val meResult = repository.currentUser()
+        assertTrue(meResult is AuthResult.Failure)
+        assertFalse(repository.hasStoredSession())
+        assertNull(repository.getCachedUser())
     }
 }

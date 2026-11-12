@@ -5,12 +5,14 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import com.truckpark.management.domain.models.AuthSession
+import com.truckpark.management.domain.models.AuthUser
 import java.security.KeyStore
 import java.time.Instant
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
+import org.json.JSONArray
 import org.json.JSONObject
 
 data class StoredPendingCode(
@@ -36,6 +38,9 @@ interface SessionStore {
     fun save(session: AuthSession)
     fun save(session: AuthSession, isNewLogin: Boolean) = save(session)
     fun getSessionRemainingMillis(): Long? = null
+    fun saveCachedUser(user: AuthUser?, offlineValidUntil: Instant? = null) {}
+    fun loadCachedUser(): AuthUser? = null
+    fun getOfflineValidUntil(): Instant? = null
     fun clear()
     fun markEmailVerified(email: String) {}
     fun unmarkEmailVerified(email: String) {}
@@ -128,7 +133,73 @@ class KeystoreSessionStore(context: Context) : SessionStore {
 
     @Synchronized
     override fun clear() {
-        prefs.edit().remove(KEY_BLOB).commit()
+        prefs.edit()
+            .remove(KEY_BLOB)
+            .remove(KEY_USER_BLOB)
+            .commit()
+    }
+
+    @Synchronized
+    override fun saveCachedUser(user: AuthUser?, offlineValidUntil: Instant?) {
+        if (user == null) {
+            prefs.edit().remove(KEY_USER_BLOB).commit()
+            return
+        }
+        val preservedOfflineUntil = offlineValidUntil ?: getOfflineValidUntil()
+        val json = JSONObject()
+            .put("id", user.id)
+            .put("fullName", user.fullName)
+            .put("email", user.email)
+            .put("status", user.status)
+            .put("phone", user.phone ?: JSONObject.NULL)
+            .put("emailVerified", user.emailVerified)
+            .put("roles", JSONArray(user.roles))
+            .put("permissions", JSONArray(user.permissions.toList()))
+            .put("mustChangePassword", user.mustChangePassword)
+            .apply {
+                if (preservedOfflineUntil != null) {
+                    put("offlineValidUntilSec", preservedOfflineUntil.epochSecond)
+                }
+            }
+        prefs.edit()
+            .putString(KEY_USER_BLOB, encryptJson(json))
+            .commit()
+    }
+
+    @Synchronized
+    override fun loadCachedUser(): AuthUser? {
+        val stored = prefs.getString(KEY_USER_BLOB, null) ?: return null
+        return try {
+            val json = decryptJson(stored)
+            val rolesArr = json.optJSONArray("roles")
+            val permsArr = json.optJSONArray("permissions")
+            AuthUser(
+                id = json.getString("id"),
+                fullName = json.getString("fullName"),
+                email = json.getString("email"),
+                status = json.getString("status"),
+                phone = json.optString("phone").takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) },
+                emailVerified = json.optBoolean("emailVerified", false),
+                roles = List(rolesArr?.length() ?: 0) { rolesArr!!.getString(it) },
+                permissions = List(permsArr?.length() ?: 0) { permsArr!!.getString(it) }.toSet(),
+                mustChangePassword = json.optBoolean("mustChangePassword", false),
+            )
+        } catch (_: Exception) {
+            prefs.edit().remove(KEY_USER_BLOB).commit()
+            null
+        }
+    }
+
+    @Synchronized
+    override fun getOfflineValidUntil(): Instant? {
+        val stored = prefs.getString(KEY_USER_BLOB, null) ?: return null
+        return try {
+            val json = decryptJson(stored)
+            val epoch = json.optLong("offlineValidUntilSec", 0L)
+            if (epoch > 0L) Instant.ofEpochSecond(epoch) else null
+        } catch (_: Exception) {
+            null
+        }
     }
 
     @Synchronized
@@ -260,6 +331,7 @@ class KeystoreSessionStore(context: Context) : SessionStore {
     private companion object {
         const val PREFS = "auth_session_secure"
         const val KEY_BLOB = "blob"
+        const val KEY_USER_BLOB = "user_blob"
         const val KEY_VERIFIED_EMAILS = "verified_emails"
         const val KEY_PENDING_CODE = "pending_code"
         const val KEY_PENDING_SIGNUP = "pending_signup"

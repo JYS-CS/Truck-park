@@ -70,12 +70,23 @@ class AuthRepositoryImpl(
 
     override fun getSessionRemainingMillis(): Long? = store.getSessionRemainingMillis()
 
+    override fun getCachedUser(): AuthUser? {
+        if (store.load() == null) return null
+        val offlineUntil = store.getOfflineValidUntil()
+        if (offlineUntil != null && clock.instant().isAfter(offlineUntil)) return null
+        return lastKnownUser ?: store.loadCachedUser()?.also { loaded ->
+            lastKnownUser = loaded
+            lastKnownEmail = loaded.email.trim().lowercase()
+        }
+    }
+
     override suspend fun signIn(email: String, password: String): AuthResult<SignInResult> {
         val cleanEmail = email.trim().lowercase()
         val result = remote.signIn(cleanEmail, password, devices.deviceId(), deviceName)
         if (result is AuthResult.Success) {
             store.save(result.value.session, isNewLogin = true)
             val user = result.value.user
+            store.saveCachedUser(user, result.value.offlineValidUntil)
             lastKnownUser = user
             lastKnownEmail = user.email.trim().lowercase()
         }
@@ -97,6 +108,7 @@ class AuthRepositoryImpl(
         val result = authorised { token -> remote.me(token) }
         if (result is AuthResult.Success) {
             val user = result.value
+            store.saveCachedUser(user)
             lastKnownUser = user
             lastKnownEmail = user.email.trim().lowercase()
         }
@@ -170,13 +182,15 @@ class AuthRepositoryImpl(
 
         store.markEmailVerified(targetEmail)
         lastKnownEmail = targetEmail
-        lastKnownUser = lastKnownUser?.copy(
+        val updatedUser = lastKnownUser?.copy(
             email = targetEmail,
             fullName = fullName?.trim()?.takeIf { it.isNotEmpty() } ?: lastKnownUser?.fullName.orEmpty(),
             phone = phone?.trim()?.takeIf { it.isNotEmpty() } ?: lastKnownUser?.phone,
             emailVerified = true,
             mustChangePassword = false,
         )
+        lastKnownUser = updatedUser
+        if (updatedUser != null) store.saveCachedUser(updatedUser)
         persistPendingAdminCode(null)
         return AuthResult.Success(Unit)
     }
@@ -227,10 +241,12 @@ class AuthRepositoryImpl(
         val result = authorised { token -> remote.changePassword(token, cleanEmail, newPassword) }
         if (result is AuthResult.Success) {
             lastKnownEmail = cleanEmail
-            lastKnownUser = lastKnownUser?.copy(
+            val updated = lastKnownUser?.copy(
                 email = cleanEmail,
                 mustChangePassword = false,
             )
+            lastKnownUser = updated
+            if (updated != null) store.saveCachedUser(updated)
         }
         return result
     }
@@ -478,9 +494,19 @@ class AuthRepositoryImpl(
         }
 
         val first = call(session.sessionToken)
+        if (first is AuthResult.Failure && first.error.endsSession) {
+            store.clear()
+            return first
+        }
         if (first is AuthResult.Failure && first.error.code == AuthError.UNAUTHORIZED) {
             return when (val refreshed = refresh(session)) {
-                is AuthResult.Success -> call(refreshed.value.sessionToken)
+                is AuthResult.Success -> {
+                    val retried = call(refreshed.value.sessionToken)
+                    if (retried is AuthResult.Failure && retried.error.endsSession) {
+                        store.clear()
+                    }
+                    retried
+                }
                 is AuthResult.Failure -> refreshed
             }
         }

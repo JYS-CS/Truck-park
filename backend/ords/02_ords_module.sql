@@ -48,15 +48,50 @@ END;
 BEGIN
   BEGIN
     EXECUTE IMMEDIATE 'ALTER TABLE truck_visits ADD (
-      country_code VARCHAR2(10) DEFAULT ''ZM'',
-      front_plate  VARCHAR2(20),
-      horse_plate  VARCHAR2(20),
-      transporter  VARCHAR2(100)
+      country_code      VARCHAR2(10) DEFAULT ''ZM'',
+      front_plate       VARCHAR2(20),
+      horse_plate       VARCHAR2(20),
+      transporter       VARCHAR2(100),
+      cargo_description VARCHAR2(500),
+      cargo_items_json  CLOB,
+      seals_json        CLOB
     )';
   EXCEPTION
     WHEN OTHERS THEN
       IF SQLCODE != -1430 THEN NULL; END IF;
   END;
+
+  BEGIN
+    EXECUTE IMMEDIATE 'ALTER TABLE truck_visits ADD (
+      cargo_description VARCHAR2(500),
+      cargo_items_json  CLOB,
+      seals_json        CLOB
+    )';
+  EXCEPTION
+    WHEN OTHERS THEN
+      IF SQLCODE != -1430 THEN NULL; END IF;
+  END;
+
+  BEGIN
+    EXECUTE IMMEDIATE 'CREATE TABLE visit_corrections (
+      id              VARCHAR2(36) DEFAULT LOWER(RAWTOHEX(SYS_GUID())) PRIMARY KEY,
+      visit_id        VARCHAR2(36) NOT NULL REFERENCES truck_visits(id),
+      edited_by       VARCHAR2(36) NOT NULL REFERENCES users(id),
+      edited_at       TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP NOT NULL,
+      reason          VARCHAR2(500),
+      changes_summary VARCHAR2(1000) NOT NULL,
+      was_critical    CHAR(1) DEFAULT ''N'' NOT NULL,
+      before_json     CLOB,
+      after_json      CLOB
+    )';
+  EXCEPTION
+    WHEN OTHERS THEN
+      IF SQLCODE != -955 THEN NULL; END IF;
+  END;
+
+  BEGIN
+    EXECUTE IMMEDIATE 'CREATE INDEX idx_visit_corrections_visit ON visit_corrections(visit_id, edited_at)';
+  EXCEPTION WHEN OTHERS THEN NULL; END;
 
   UPDATE truck_visits
      SET front_plate  = NVL(front_plate, plate_number),
@@ -231,13 +266,17 @@ BEGIN
   add_handler('admin/permissions/exceptions/:id/revoke', 'POST',
     'PKG_API.revoke_user_exception(:authorization, :id, v_s, v_b);');
 
-  -- Truck visits (Milestone 3) ----------------------------------------------
+  -- Truck visits (Milestone 3–5) --------------------------------------------
   add_handler('visits', 'GET',
     'PKG_API.list_visits(:authorization, :visit_status, v_s, v_b);');
   add_handler('visits/arrive', 'POST',
-    'PKG_API.record_arrival(:authorization, :visit_id, :plate_number, :visit_type, :driver_name, :driver_phone, :notes, :arrived_at, :allow_duplicate, v_s, v_b);');
+    'PKG_API.record_arrival(:authorization, :visit_id, :plate_number, :visit_type, :driver_name, :driver_phone, :notes, :arrived_at, :allow_duplicate, :country_code, :front_plate, :horse_plate, :transporter, :cargo_description, :cargo_items_json, :seals_json, v_s, v_b);');
   add_handler('visits/:id/depart', 'POST',
     'PKG_API.record_departure(:authorization, :id, :departed_at, :notes, v_s, v_b);');
+  add_handler('visits/:id/correct', 'POST',
+    'PKG_API.correct_visit(:authorization, :id, :plate_number, :country_code, :front_plate, :horse_plate, :transporter, :visit_type, :driver_name, :driver_phone, :arrival_notes, :departure_notes, :cargo_description, :cargo_items_json, :seals_json, :reason, :expected_row_version, v_s, v_b);');
+  add_handler('visits/:id/history', 'GET',
+    'PKG_API.list_visit_history(:authorization, :id, v_s, v_b);');
 
   COMMIT;
 END;

@@ -13,6 +13,7 @@ import com.truckpark.management.data.remote.auth.AuthRemoteDataSource
 import com.truckpark.management.data.remote.auth.OrdsAuthRemoteDataSource
 import com.truckpark.management.data.remote.visits.OrdsVisitsRemoteDataSource
 import com.truckpark.management.data.repositories.AuthRepositoryImpl
+import com.truckpark.management.data.repositories.PrefsLastSyncStore
 import com.truckpark.management.data.repositories.ThemeRepositoryImpl
 import com.truckpark.management.data.repositories.VisitsRepositoryImpl
 import com.truckpark.management.domain.repositories.AuthRepository
@@ -41,6 +42,7 @@ class AppContainer(context: Context) {
         db = database,
         remote = OrdsVisitsRemoteDataSource(AppConfig.apiBaseUrl, HttpUrlConnectionTransport()),
         auth = authRepository,
+        lastSyncStore = PrefsLastSyncStore(context),
     )
 }
 

@@ -35,18 +35,37 @@ class AuthViewModel(
     private val authRepository: AuthRepository,
 ) : ViewModel() {
 
-    private val _uiState = MutableStateFlow<AuthUiState>(
-        if (authRepository.hasStoredSession()) AuthUiState.Loading else AuthUiState.Idle,
-    )
+    private val _uiState = MutableStateFlow(initialUiState())
     val uiState: StateFlow<AuthUiState> = _uiState.asStateFlow()
 
     private var autoLogoutJob: Job? = null
 
     init {
-        // If a valid session is already saved in Keystore, silently validate it
         if (authRepository.hasStoredSession()) {
-            checkCurrentSession()
+            val hasCachedUser = authRepository.getCachedUser() != null
+            if (hasCachedUser) {
+                scheduleAutoLogout()
+            }
+            // Silently refresh role/permissions in the background when online;
+            // if offline, keep the cached session active instead of logging out.
+            checkCurrentSession(silent = hasCachedUser)
         }
+    }
+
+    private fun initialUiState(): AuthUiState {
+        if (!authRepository.hasStoredSession()) return AuthUiState.Idle
+        val cached = authRepository.getCachedUser()
+        return if (cached != null) userStateFor(cached) else AuthUiState.Loading
+    }
+
+    private fun userStateFor(user: AuthUser): AuthUiState = if (user.isAdminSetupRequired) {
+        AuthUiState.AdminSecuritySetup(
+            user = user,
+            emailVerified = user.emailVerified,
+            passwordChanged = !user.mustChangePassword,
+        )
+    } else {
+        AuthUiState.Authenticated(user)
     }
 
     private fun scheduleAutoLogout() {
@@ -62,32 +81,57 @@ class AuthViewModel(
         }
     }
 
-    fun checkCurrentSession() {
+    fun checkCurrentSession(silent: Boolean = false) {
         viewModelScope.launch {
-            _uiState.value = AuthUiState.Loading
+            val alreadySignedIn = _uiState.value is AuthUiState.Authenticated ||
+                _uiState.value is AuthUiState.AdminSecuritySetup
+            if (!silent && !alreadySignedIn) {
+                _uiState.value = AuthUiState.Loading
+            }
             when (val result = authRepository.currentUser()) {
                 is AuthResult.Success -> {
-                    val user = result.value
-                    if (user.isAdminSetupRequired) {
-                        _uiState.value = AuthUiState.AdminSecuritySetup(
-                            user = user,
-                            emailVerified = user.emailVerified,
-                            passwordChanged = !user.mustChangePassword,
-                        )
-                    } else {
-                        _uiState.value = AuthUiState.Authenticated(user)
-                    }
+                    _uiState.value = userStateFor(result.value)
                     scheduleAutoLogout()
                 }
                 is AuthResult.Failure -> {
-                    if (result.error.code == com.truckpark.management.core.common.AuthError.DEVICE_REVOKED) {
-                        _uiState.value = AuthUiState.Error(
-                            message = result.error.message,
-                            code = result.error.code,
-                        )
-                    } else {
-                        // Session expired or revoked: return to Idle sign-in
-                        _uiState.value = AuthUiState.Idle
+                    val err = result.error
+                    val isSessionInvalidated = err.endsSession ||
+                        err.code == com.truckpark.management.core.common.AuthError.UNAUTHORIZED ||
+                        err.code == com.truckpark.management.core.common.AuthError.NOT_SIGNED_IN ||
+                        !authRepository.hasStoredSession()
+
+                    when {
+                        err.code == com.truckpark.management.core.common.AuthError.DEVICE_REVOKED -> {
+                            autoLogoutJob?.cancel()
+                            autoLogoutJob = null
+                            _uiState.value = AuthUiState.Error(
+                                message = err.message,
+                                code = err.code,
+                            )
+                        }
+                        !isSessionInvalidated -> {
+                            // Offline / transient network or server error while session token is still valid:
+                            // preserve active UI state or restore from encrypted cached user instead of logging out.
+                            if (alreadySignedIn) {
+                                scheduleAutoLogout()
+                            } else {
+                                val cached = authRepository.getCachedUser()
+                                if (cached != null) {
+                                    _uiState.value = userStateFor(cached)
+                                    scheduleAutoLogout()
+                                } else {
+                                    _uiState.value = AuthUiState.Error(
+                                        message = err.message,
+                                        code = err.code,
+                                    )
+                                }
+                            }
+                        }
+                        else -> {
+                            autoLogoutJob?.cancel()
+                            autoLogoutJob = null
+                            _uiState.value = AuthUiState.Idle
+                        }
                     }
                 }
             }

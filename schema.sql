@@ -247,6 +247,9 @@ CREATE TABLE truck_visits (
   front_plate       VARCHAR2(20),
   horse_plate       VARCHAR2(20),
   transporter       VARCHAR2(100),
+  cargo_description VARCHAR2(500),
+  cargo_items_json  CLOB,
+  seals_json        CLOB,
   departed_at       TIMESTAMP WITH TIME ZONE,
   departed_by       VARCHAR2(36) REFERENCES users(id),
   departure_notes   VARCHAR2(1000),
@@ -264,6 +267,22 @@ CREATE INDEX idx_visits_status_arrived ON truck_visits(status, arrived_at);
 CREATE INDEX idx_visits_front_plate ON truck_visits(front_plate, status);
 CREATE INDEX idx_visits_horse_plate ON truck_visits(horse_plate, status);
 CREATE INDEX idx_visits_transporter ON truck_visits(transporter);
+
+-- Audit trail of field-level corrections on visits (never overwrites original timestamps)
+CREATE TABLE visit_corrections (
+  id              VARCHAR2(36) DEFAULT LOWER(RAWTOHEX(SYS_GUID())) PRIMARY KEY,
+  visit_id        VARCHAR2(36) NOT NULL REFERENCES truck_visits(id),
+  edited_by       VARCHAR2(36) NOT NULL REFERENCES users(id),
+  edited_at       TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP NOT NULL,
+  reason          VARCHAR2(500),
+  changes_summary VARCHAR2(1000) NOT NULL,
+  was_critical    CHAR(1) DEFAULT 'N' NOT NULL,
+  before_json     CLOB,
+  after_json      CLOB,
+  CONSTRAINT chk_vc_critical CHECK (was_critical IN ('Y', 'N'))
+);
+
+CREATE INDEX idx_visit_corrections_visit ON visit_corrections(visit_id, edited_at);
 
 -- =============================================================================
 -- 3. POPULATING INITIAL ROLES AND PERMISSIONS

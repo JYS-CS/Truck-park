@@ -149,6 +149,32 @@ CREATE OR REPLACE PACKAGE PKG_API AS
     p_transporter IN VARCHAR2,
     p_status OUT NUMBER, p_body OUT CLOB);
 
+  PROCEDURE record_arrival(
+    p_authorization IN VARCHAR2, p_visit_id IN VARCHAR2, p_plate_number IN VARCHAR2,
+    p_visit_type IN VARCHAR2, p_driver_name IN VARCHAR2, p_driver_phone IN VARCHAR2,
+    p_notes IN VARCHAR2, p_arrived_at IN VARCHAR2, p_allow_duplicate IN VARCHAR2,
+    p_country_code IN VARCHAR2,
+    p_front_plate IN VARCHAR2,
+    p_horse_plate IN VARCHAR2,
+    p_transporter IN VARCHAR2,
+    p_cargo_description IN VARCHAR2,
+    p_cargo_items_json IN CLOB,
+    p_seals_json IN CLOB,
+    p_status OUT NUMBER, p_body OUT CLOB);
+
+  PROCEDURE correct_visit(
+    p_authorization IN VARCHAR2, p_visit_id IN VARCHAR2, p_plate_number IN VARCHAR2,
+    p_country_code IN VARCHAR2, p_front_plate IN VARCHAR2, p_horse_plate IN VARCHAR2,
+    p_transporter IN VARCHAR2, p_visit_type IN VARCHAR2, p_driver_name IN VARCHAR2,
+    p_driver_phone IN VARCHAR2, p_arrival_notes IN VARCHAR2, p_departure_notes IN VARCHAR2,
+    p_cargo_description IN VARCHAR2, p_cargo_items_json IN CLOB, p_seals_json IN CLOB,
+    p_reason IN VARCHAR2, p_expected_row_version IN NUMBER,
+    p_status OUT NUMBER, p_body OUT CLOB);
+
+  PROCEDURE list_visit_history(
+    p_authorization IN VARCHAR2, p_visit_id IN VARCHAR2,
+    p_status OUT NUMBER, p_body OUT CLOB);
+
   PROCEDURE record_departure(
     p_authorization IN VARCHAR2, p_visit_id IN VARCHAR2, p_departed_at IN VARCHAR2,
     p_notes IN VARCHAR2,

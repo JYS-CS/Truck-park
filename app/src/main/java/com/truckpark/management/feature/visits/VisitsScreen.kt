@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -36,8 +37,9 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
@@ -45,8 +47,10 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.LocalShipping
-import androidx.compose.material.icons.filled.Logout
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
@@ -62,6 +66,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -91,14 +96,24 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.truckpark.management.R
+import com.truckpark.management.core.common.AuthResult
 import com.truckpark.management.core.designsystem.components.GlassCard
 import com.truckpark.management.core.designsystem.theme.TruckParkExtras
 import com.truckpark.management.data.local.TransporterStore
 import com.truckpark.management.domain.models.ArrivalDraft
+import com.truckpark.management.domain.models.ArrivalOutcome
 import com.truckpark.management.domain.models.AuthUser
+import com.truckpark.management.domain.models.CargoItem
 import com.truckpark.management.domain.models.PlateInfo
+import com.truckpark.management.domain.models.SealCondition
+import com.truckpark.management.domain.models.SyncAlertBanner
+import com.truckpark.management.domain.models.SyncAlertSeverity
 import com.truckpark.management.domain.models.SyncState
 import com.truckpark.management.domain.models.TruckVisit
+import com.truckpark.management.domain.models.VisitCorrectionDraft
+import com.truckpark.management.domain.models.VisitCorrectionRecord
+import com.truckpark.management.domain.models.VisitSeal
+import com.truckpark.management.domain.models.VisitStatus
 import com.truckpark.management.domain.models.VisitType
 import com.truckpark.management.domain.models.cleanDisplayNotes
 import com.truckpark.management.domain.models.extractPlateInfo
@@ -107,8 +122,9 @@ import com.truckpark.management.feature.ocr.OcrScanMode
 import com.truckpark.management.feature.ocr.PlateScannerDialog
 import java.time.Duration
 import java.time.Instant
+import kotlinx.coroutines.delay
 
-private val CapsuleShape = RoundedCornerShape(999.dp)
+internal val CapsuleShape = RoundedCornerShape(999.dp)
 private val PlateShape = RoundedCornerShape(8.dp)
 
 /**
@@ -120,7 +136,7 @@ private val PlateShape = RoundedCornerShape(8.dp)
 private sealed interface VisitsScreenMode {
     data object List : VisitsScreenMode
     data object Arrival : VisitsScreenMode
-    data class Departure(val visit: TruckVisit) : VisitsScreenMode
+    data class Departure(val visitId: String, val fallbackVisit: TruckVisit) : VisitsScreenMode
 }
 
 @Composable
@@ -135,7 +151,35 @@ fun VisitsScreen(
     val scheme = MaterialTheme.colorScheme
     val dark = scheme.background.luminance() < 0.5f
 
+    val canArrive = user?.can("visit.arrive") ?: true
+    val canDepart = user?.can("visit.depart") ?: true
+    val canCorrectCritical = user?.can("visit.correct_critical") ?: (user?.isAdmin == true || user?.isSupervisor == true)
+    val canEditOpen = canArrive || canCorrectCritical
+    val canResolveConflicts = canCorrectCritical || user?.isAdmin == true || user?.isSupervisor == true
+
     var screenMode by remember { mutableStateOf<VisitsScreenMode>(VisitsScreenMode.List) }
+    var elapsedTick by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(30_000)
+            elapsedTick++
+        }
+    }
+
+    // Navigate back cleanly only once arrival or departure succeeds
+    LaunchedEffect(uiState.arrivalOutcome, screenMode) {
+        if (screenMode is VisitsScreenMode.Arrival && uiState.arrivalOutcome is ArrivalOutcome.Saved) {
+            viewModel.clearArrivalOutcome()
+            screenMode = VisitsScreenMode.List
+        }
+    }
+    LaunchedEffect(uiState.departureOutcome, screenMode) {
+        if (screenMode is VisitsScreenMode.Departure && uiState.departureOutcome is AuthResult.Success) {
+            viewModel.clearDepartureOutcome()
+            screenMode = VisitsScreenMode.List
+        }
+    }
 
     // Toggle bottom navigation bar visibility based on active sub-flow
     LaunchedEffect(screenMode) {
@@ -144,6 +188,9 @@ fun VisitsScreen(
 
     // Intercept back navigation when in full-page sub-flows
     BackHandler(enabled = screenMode != VisitsScreenMode.List) {
+        viewModel.clearArrivalOutcome()
+        viewModel.clearDepartureOutcome()
+        viewModel.clearCorrectionOutcome()
         screenMode = VisitsScreenMode.List
     }
 
@@ -163,41 +210,97 @@ fun VisitsScreen(
             is VisitsScreenMode.List -> {
                 VisitsListContent(
                     uiState = uiState,
+                    elapsedTick = elapsedTick,
+                    canArrive = canArrive,
                     dark = dark,
                     onMenuClick = onMenuClick,
-                    onLogArrivalClick = { screenMode = VisitsScreenMode.Arrival },
-                    onVisitClick = { visit -> screenMode = VisitsScreenMode.Departure(visit) },
+                    onLogArrivalClick = {
+                        viewModel.clearArrivalOutcome()
+                        screenMode = VisitsScreenMode.Arrival
+                    },
+                    onVisitClick = { visit ->
+                        viewModel.clearDepartureOutcome()
+                        viewModel.clearCorrectionOutcome()
+                        screenMode = VisitsScreenMode.Departure(visit.id, visit)
+                    },
+                    onShowCompletedChanged = { viewModel.onShowCompletedChanged(it) },
                     onSearchQueryChanged = { viewModel.onSearchQueryChanged(it) },
                     onTypeFilterSelected = { viewModel.onTypeFilterSelected(it) },
-                    onTriggerSync = { viewModel.triggerSync() },
+                    onManualRetrySync = { viewModel.manualRetrySync() },
                     onDismissBanner = { viewModel.dismissBanner() },
+                    onReviewConflicts = {
+                        uiState.conflictVisits.firstOrNull()?.let { conflict ->
+                            viewModel.clearDepartureOutcome()
+                            viewModel.clearCorrectionOutcome()
+                            screenMode = VisitsScreenMode.Departure(conflict.id, conflict)
+                        }
+                    },
                 )
             }
             is VisitsScreenMode.Arrival -> {
                 GateArrivalFullPage(
                     openVisits = uiState.openVisits,
                     plateSuggestions = uiState.plateSuggestions,
+                    isSubmitting = uiState.isSubmittingArrival,
+                    arrivalOutcome = uiState.arrivalOutcome,
+                    onPlateQueryChange = { viewModel.onPlateInputChanged(it) },
+                    onClearOutcome = { viewModel.clearArrivalOutcome() },
                     onBack = {
                         screenMode = VisitsScreenMode.List
                         viewModel.clearArrivalOutcome()
                     },
                     onConfirm = { draft, allowDuplicate ->
                         viewModel.recordArrival(draft, allowDuplicate)
-                        screenMode = VisitsScreenMode.List
                     },
                     dark = dark,
                 )
             }
             is VisitsScreenMode.Departure -> {
+                val liveVisit = uiState.openVisits.firstOrNull { it.id == mode.visitId }
+                    ?: uiState.recentCompleted.firstOrNull { it.id == mode.visitId }
+                    ?: uiState.conflictVisits.firstOrNull { it.id == mode.visitId }
+                    ?: mode.fallbackVisit
+                val history by remember(liveVisit.id) {
+                    viewModel.observeVisitHistory(liveVisit.id)
+                }.collectAsStateWithLifecycle(initialValue = emptyList())
+
+                LaunchedEffect(liveVisit.id) {
+                    viewModel.refreshVisitHistory(liveVisit.id)
+                }
+
                 GateDepartureFullPage(
-                    visit = mode.visit,
+                    visit = liveVisit,
+                    history = history,
+                    elapsedTick = elapsedTick,
+                    canDepart = canDepart,
+                    canEditVisit = if (liveVisit.status == VisitStatus.Completed) canCorrectCritical else canEditOpen,
+                    canResolveConflicts = canResolveConflicts,
+                    isSubmittingDeparture = uiState.isSubmittingDeparture,
+                    departureError = (uiState.departureOutcome as? AuthResult.Failure)?.error?.message,
+                    isSubmittingCorrection = uiState.isSubmittingCorrection,
+                    correctionOutcome = uiState.correctionOutcome,
+                    isSyncBusy = uiState.isSyncing,
+                    onClearCorrectionOutcome = { viewModel.clearCorrectionOutcome() },
                     onBack = {
                         screenMode = VisitsScreenMode.List
                         viewModel.clearDepartureOutcome()
+                        viewModel.clearCorrectionOutcome()
                     },
-                    onConfirm = { notes ->
-                        viewModel.recordDeparture(mode.visit.id, notes)
-                        screenMode = VisitsScreenMode.List
+                    onConfirmDeparture = { notes ->
+                        viewModel.recordDeparture(liveVisit.id, notes)
+                    },
+                    onSaveCorrection = { draft ->
+                        viewModel.recordCorrection(
+                            draft = draft,
+                            canCorrectCritical = canCorrectCritical,
+                            editorName = user?.fullName,
+                        )
+                    },
+                    onResolveConflictKeepDevice = {
+                        viewModel.resolveConflictKeepLocal(liveVisit.id) { }
+                    },
+                    onResolveConflictUseServer = {
+                        viewModel.resolveConflictUseServer(liveVisit.id) { }
                     },
                     dark = dark,
                 )
@@ -213,24 +316,30 @@ fun VisitsScreen(
 @Composable
 private fun VisitsListContent(
     uiState: VisitsUiState,
+    elapsedTick: Int,
+    canArrive: Boolean,
     dark: Boolean,
     onMenuClick: () -> Unit,
     onLogArrivalClick: () -> Unit,
     onVisitClick: (TruckVisit) -> Unit,
+    onShowCompletedChanged: (Boolean) -> Unit,
     onSearchQueryChanged: (String) -> Unit,
     onTypeFilterSelected: (VisitType?) -> Unit,
-    onTriggerSync: () -> Unit,
+    onManualRetrySync: () -> Unit,
     onDismissBanner: () -> Unit,
+    onReviewConflicts: () -> Unit,
 ) {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = Color.Transparent,
         floatingActionButton = {
-            LiquidArrivalFab(
-                onClick = onLogArrivalClick,
-                dark = dark,
-                modifier = Modifier.padding(bottom = 12.dp),
-            )
+            if (canArrive) {
+                LiquidArrivalFab(
+                    onClick = onLogArrivalClick,
+                    dark = dark,
+                    modifier = Modifier.padding(bottom = 12.dp),
+                )
+            }
         },
         floatingActionButtonPosition = androidx.compose.material3.FabPosition.End,
     ) { innerPadding ->
@@ -239,19 +348,42 @@ private fun VisitsListContent(
                 .fillMaxSize()
                 .padding(innerPadding)
                 .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Spacer(Modifier.height(4.dp))
 
             // Liquid Glass Header Strip
             LiquidVisitsHeader(
+                lastSyncedAt = uiState.lastSyncedAt,
+                isSyncing = uiState.isSyncing,
                 onMenuClick = onMenuClick,
                 dark = dark,
             )
 
+            // Sync Failure / Conflict Banner (shown ONLY after repeated auto-sync failures, conflicts, or session expiry)
+            uiState.syncAlertBanner?.let { banner ->
+                LiquidSyncBanner(
+                    banner = banner,
+                    isSyncing = uiState.isSyncing,
+                    onRetryClick = onManualRetrySync,
+                    onReviewConflicts = onReviewConflicts,
+                    onDismissMessage = onDismissBanner,
+                    dark = dark,
+                )
+            }
+
             // Yard Capacity & Status Metrics Strip
             YardMetricsBar(
                 openVisits = uiState.openVisits,
+                dark = dark,
+            )
+
+            // On Yard / Departed Segmented Switch
+            YardTabSwitch(
+                openCount = uiState.openVisits.size,
+                completedCount = uiState.recentCompleted.size,
+                showCompleted = uiState.showCompleted,
+                onSelect = onShowCompletedChanged,
                 dark = dark,
             )
 
@@ -264,10 +396,12 @@ private fun VisitsListContent(
                 dark = dark,
             )
 
-            // Active Visits Scrollable List
+            // Visits Scrollable List
             if (uiState.filteredVisits.isEmpty()) {
                 LiquidEmptyVisitsState(
                     isFiltered = uiState.searchQuery.isNotBlank() || uiState.selectedTypeFilter != null,
+                    showCompleted = uiState.showCompleted,
+                    canArrive = canArrive,
                     dark = dark,
                     onLogArrivalClick = onLogArrivalClick,
                 )
@@ -282,6 +416,7 @@ private fun VisitsListContent(
                     items(uiState.filteredVisits, key = { it.id }) { visit ->
                         LiquidActiveVisitCard(
                             visit = visit,
+                            elapsedTick = elapsedTick,
                             onCardClick = { onVisitClick(visit) },
                             dark = dark,
                         )
@@ -300,6 +435,10 @@ private fun VisitsListContent(
 private fun GateArrivalFullPage(
     openVisits: List<TruckVisit>,
     plateSuggestions: List<String>,
+    isSubmitting: Boolean,
+    arrivalOutcome: ArrivalOutcome?,
+    onPlateQueryChange: (String) -> Unit,
+    onClearOutcome: () -> Unit,
     onBack: () -> Unit,
     onConfirm: (draft: ArrivalDraft, allowDuplicate: Boolean) -> Unit,
     dark: Boolean,
@@ -326,10 +465,32 @@ private fun GateArrivalFullPage(
     var driverNameInput by remember { mutableStateOf("") }
     var driverPhoneDigits by remember { mutableStateOf("") }
     var notesInput by remember { mutableStateOf("") }
+    var cargoDescriptionInput by remember { mutableStateOf("") }
+    var cargoItems by remember { mutableStateOf<List<CargoItem>>(emptyList()) }
+    var seals by remember { mutableStateOf<List<VisitSeal>>(emptyList()) }
+    var pendingDuplicateDraft by remember { mutableStateOf<ArrivalDraft?>(null) }
+    var pendingDuplicateVisit by remember { mutableStateOf<TruckVisit?>(null) }
 
     val cleanCountry = countryCodeInput.trim().uppercase().take(4)
     val cleanFrontPlate = normalizePlate(frontPlateInput)
     val cleanHorsePlate = normalizePlate(horsePlateInput)
+
+    // Query live vehicle history suggestions as user types front or horse plate
+    LaunchedEffect(cleanFrontPlate, cleanHorsePlate) {
+        val activePrefix = when {
+            cleanFrontPlate.length >= 2 -> cleanFrontPlate
+            cleanHorsePlate.length >= 2 -> cleanHorsePlate
+            else -> ""
+        }
+        onPlateQueryChange(activePrefix)
+    }
+
+    // Also handle server-side OPEN_VISIT_EXISTS if an open visit exists remotely
+    LaunchedEffect(arrivalOutcome) {
+        if (arrivalOutcome is ArrivalOutcome.OpenVisitExists) {
+            pendingDuplicateVisit = arrivalOutcome.existing
+        }
+    }
 
     // Autocomplete dropdown matching results
     val matchingTransporters = remember(transporterInput, isTransporterFocused) {
@@ -357,7 +518,8 @@ private fun GateArrivalFullPage(
     val isPhoneValid = driverPhoneDigits.isEmpty() || driverPhoneDigits.length in 7..15
 
     // ONLY 3 THINGS ARE NOT OPTIONAL: country, front plate, and horse plate!
-    val canSave = cleanCountry.isNotBlank() &&
+    val canSave = !isSubmitting &&
+        cleanCountry.isNotBlank() &&
         cleanFrontPlate.isNotBlank() &&
         cleanHorsePlate.isNotBlank() &&
         isPhoneValid
@@ -365,6 +527,7 @@ private fun GateArrivalFullPage(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .imePadding()
             .padding(horizontal = 16.dp),
     ) {
         Spacer(Modifier.height(8.dp))
@@ -382,6 +545,7 @@ private fun GateArrivalFullPage(
                     .background(extras.glassFill)
                     .border(BorderStroke(1.dp, extras.glassBorder), CircleShape)
                     .clickable(
+                        enabled = !isSubmitting,
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
                         onClick = onBack,
@@ -389,7 +553,7 @@ private fun GateArrivalFullPage(
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    imageVector = Icons.Default.ArrowBack,
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "Back",
                     tint = scheme.onSurface,
                     modifier = Modifier.size(20.dp),
@@ -1020,7 +1184,18 @@ private fun GateArrivalFullPage(
                 }
             }
 
-            // CARD 5: INSPECTION AND CARGO NOTES IF AVAILABLE (OPTIONAL)
+            // CARD 5: CARGO & SEALS REGISTER (OPTIONAL)
+            CargoAndSealsEditorCard(
+                cargoDescription = cargoDescriptionInput,
+                onCargoDescriptionChange = { cargoDescriptionInput = it },
+                cargoItems = cargoItems,
+                onCargoItemsChange = { cargoItems = it },
+                seals = seals,
+                onSealsChange = { seals = it },
+                dark = dark,
+            )
+
+            // CARD 6: INSPECTION AND GENERAL NOTES IF AVAILABLE (OPTIONAL)
             GlassCard(modifier = Modifier.fillMaxWidth(), contentPadding = 16) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
@@ -1041,6 +1216,25 @@ private fun GateArrivalFullPage(
                 }
             }
 
+            if (arrivalOutcome is ArrivalOutcome.Invalid) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(scheme.error.copy(alpha = 0.14f))
+                        .border(BorderStroke(1.dp, scheme.error.copy(alpha = 0.45f)), RoundedCornerShape(12.dp))
+                        .padding(12.dp),
+                ) {
+                    Text(
+                        text = arrivalOutcome.message,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = scheme.error,
+                            fontWeight = FontWeight.SemiBold,
+                        ),
+                    )
+                }
+            }
+
             // BOTTOM ACTION BUTTONS: Confirm Arrival on top, Cancel at the bottom
             Column(
                 modifier = Modifier
@@ -1050,7 +1244,7 @@ private fun GateArrivalFullPage(
             ) {
                 // Confirm Arrival button on top
                 LiquidActionButton(
-                    text = stringResource(R.string.btn_confirm_arrival),
+                    text = if (isSubmitting) "Saving Arrival..." else stringResource(R.string.btn_confirm_arrival),
                     enabled = canSave,
                     dark = dark,
                     modifier = Modifier.fillMaxWidth(),
@@ -1075,8 +1269,17 @@ private fun GateArrivalFullPage(
                             driverName = driverNameInput.ifBlank { null },
                             driverPhone = fullPhone,
                             notes = combinedNotes.ifBlank { null },
+                            cargoDescription = cargoDescriptionInput.trim().ifBlank { null },
+                            cargoItems = cargoItems,
+                            seals = seals,
                         )
-                        onConfirm(draft, true)
+                        if (existingOpenVisit != null) {
+                            pendingDuplicateDraft = draft
+                            pendingDuplicateVisit = existingOpenVisit
+                        } else {
+                            pendingDuplicateDraft = draft
+                            onConfirm(draft, false)
+                        }
                     },
                 )
 
@@ -1087,7 +1290,7 @@ private fun GateArrivalFullPage(
                         .clip(CapsuleShape)
                         .background(extras.glassFill)
                         .border(BorderStroke(1.dp, extras.glassBorder), CapsuleShape)
-                        .clickable(onClick = onBack)
+                        .clickable(enabled = !isSubmitting, onClick = onBack)
                         .padding(vertical = 12.dp),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -1101,7 +1304,81 @@ private fun GateArrivalFullPage(
                 }
             }
 
-            Spacer(Modifier.height(80.dp))
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+
+    // Duplicate open visit confirmation dialog
+    val dupVisit = pendingDuplicateVisit
+    val dupDraft = pendingDuplicateDraft
+    if (dupVisit != null && dupDraft != null) {
+        Dialog(onDismissRequest = {
+            pendingDuplicateVisit = null
+            pendingDuplicateDraft = null
+            onClearOutcome()
+        }) {
+            GlassCard(modifier = Modifier.fillMaxWidth(), contentPadding = 20) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = Color(0xFFF59E0B),
+                            modifier = Modifier.size(22.dp),
+                        )
+                        Text(
+                            text = stringResource(R.string.warn_duplicate_open_title),
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.ExtraBold,
+                                color = scheme.onSurface,
+                            ),
+                        )
+                    }
+                    Text(
+                        text = dupVisit.syncError
+                            ?: "Truck ${dupDraft.plateNumber} already has an active open visit (${dupVisit.reference ?: "Active"}). Do you want to allow a second open visit for this truck?",
+                        style = MaterialTheme.typography.bodySmall.copy(color = scheme.onSurfaceVariant),
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        LiquidActionButton(
+                            text = "Allow & Log Arrival",
+                            enabled = !isSubmitting,
+                            dark = dark,
+                            onClick = {
+                                pendingDuplicateVisit = null
+                                pendingDuplicateDraft = null
+                                onClearOutcome()
+                                onConfirm(dupDraft, true)
+                            },
+                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(CapsuleShape)
+                                .background(extras.glassFill)
+                                .border(BorderStroke(1.dp, extras.glassBorder), CapsuleShape)
+                                .clickable {
+                                    pendingDuplicateVisit = null
+                                    pendingDuplicateDraft = null
+                                    onClearOutcome()
+                                }
+                                .padding(vertical = 11.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = stringResource(R.string.btn_cancel),
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = scheme.onSurfaceVariant,
+                                ),
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1146,22 +1423,52 @@ private fun GateArrivalFullPage(
 @Composable
 private fun GateDepartureFullPage(
     visit: TruckVisit,
+    history: List<VisitCorrectionRecord>,
+    elapsedTick: Int,
+    canDepart: Boolean,
+    canEditVisit: Boolean,
+    canResolveConflicts: Boolean,
+    isSubmittingDeparture: Boolean,
+    departureError: String?,
+    isSubmittingCorrection: Boolean,
+    correctionOutcome: AuthResult<TruckVisit>?,
+    isSyncBusy: Boolean,
+    onClearCorrectionOutcome: () -> Unit,
     onBack: () -> Unit,
-    onConfirm: (notes: String?) -> Unit,
+    onConfirmDeparture: (notes: String?) -> Unit,
+    onSaveCorrection: (VisitCorrectionDraft) -> Unit,
+    onResolveConflictKeepDevice: () -> Unit,
+    onResolveConflictUseServer: () -> Unit,
     dark: Boolean,
 ) {
     val scheme = MaterialTheme.colorScheme
     val extras = TruckParkExtras.colors
-    var departureNotes by remember { mutableStateOf("") }
+    var departureNotes by remember(visit.id) { mutableStateOf("") }
     var showConfirmDialog by remember { mutableStateOf(false) }
+    var showCorrectionDialog by remember { mutableStateOf(false) }
 
+    val isCompleted = visit.status == VisitStatus.Completed
     val plateInfo = remember(visit.plateNumber, visit.arrivalNotes) {
         extractPlateInfo(visit.plateNumber, visit.arrivalNotes)
+    }
+    val displayArrivalNotes = remember(visit.arrivalNotes) {
+        cleanDisplayNotes(visit.arrivalNotes)
+    }
+    val stayDurationLabel = remember(visit.arrivedAt, visit.departedAt, elapsedTick) {
+        formatElapsedDuration(visit.arrivedAt, visit.departedAt ?: Instant.now())
+    }
+
+    LaunchedEffect(correctionOutcome) {
+        if (correctionOutcome is AuthResult.Success) {
+            showCorrectionDialog = false
+            onClearCorrectionOutcome()
+        }
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .imePadding()
             .padding(horizontal = 16.dp),
     ) {
         Spacer(Modifier.height(8.dp))
@@ -1186,16 +1493,16 @@ private fun GateDepartureFullPage(
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    imageVector = Icons.Default.ArrowBack,
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "Back",
                     tint = scheme.onSurface,
                     modifier = Modifier.size(20.dp),
                 )
             }
 
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = stringResource(R.string.dialog_departure_title),
+                    text = if (isCompleted) "Visit Details" else stringResource(R.string.dialog_departure_title),
                     style = MaterialTheme.typography.titleLarge.copy(
                         fontWeight = FontWeight.ExtraBold,
                         color = scheme.onSurface,
@@ -1203,12 +1510,49 @@ private fun GateDepartureFullPage(
                     ),
                 )
                 Text(
-                    text = "Confirm vehicle clearance & departure",
+                    text = if (isCompleted) {
+                        "Completed stay record & audit trail"
+                    } else {
+                        "Confirm vehicle clearance & departure"
+                    },
                     style = MaterialTheme.typography.bodySmall.copy(
                         color = scheme.onSurfaceVariant,
                         fontSize = 12.sp,
                     ),
                 )
+            }
+
+            if (canEditVisit) {
+                Box(
+                    modifier = Modifier
+                        .clip(CapsuleShape)
+                        .background(scheme.primary.copy(alpha = if (dark) 0.18f else 0.10f))
+                        .border(BorderStroke(1.dp, scheme.primary.copy(alpha = 0.4f)), CapsuleShape)
+                        .clickable {
+                            onClearCorrectionOutcome()
+                            showCorrectionDialog = true
+                        }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = "Edit Visit",
+                            tint = scheme.primary,
+                            modifier = Modifier.size(15.dp),
+                        )
+                        Text(
+                            text = if (isCompleted) "Correct" else "Edit",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = scheme.primary,
+                            ),
+                        )
+                    }
+                }
             }
         }
 
@@ -1221,13 +1565,24 @@ private fun GateDepartureFullPage(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            // CARD 1: VEHICLE SUMMARY
+            if (visit.syncState == SyncState.Conflict) {
+                ConflictResolutionCard(
+                    visit = visit,
+                    canResolve = canResolveConflicts,
+                    isBusy = isSyncBusy,
+                    dark = dark,
+                    onKeepDevice = onResolveConflictKeepDevice,
+                    onUseServer = onResolveConflictUseServer,
+                )
+            }
+
+            // CARD 1: VEHICLE SUMMARY & TIMESTAMPS
             GlassCard(modifier = Modifier.fillMaxWidth(), contentPadding = 16) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
+                        verticalAlignment = Alignment.Top,
                     ) {
                         InternationalPlateBadge(
                             countryCode = plateInfo.country,
@@ -1235,20 +1590,54 @@ private fun GateDepartureFullPage(
                             plateLabel = "FRONT",
                             dark = dark,
                         )
-                        Box(
-                            modifier = Modifier
-                                .clip(CapsuleShape)
-                                .background(scheme.primary.copy(alpha = if (dark) 0.20f else 0.12f))
-                                .border(BorderStroke(1.dp, scheme.primary.copy(alpha = 0.4f)), CapsuleShape)
-                                .padding(horizontal = 10.dp, vertical = 4.dp),
+                        Column(
+                            horizontalAlignment = Alignment.End,
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            Text(
-                                text = plateInfo.customPurpose ?: visit.visitType.label,
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    color = scheme.primary,
-                                ),
-                            )
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                if (visit.isEdited) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(CapsuleShape)
+                                            .background(Color(0xFF6366F1).copy(alpha = if (dark) 0.22f else 0.12f))
+                                            .border(
+                                                BorderStroke(1.dp, Color(0xFF6366F1).copy(alpha = 0.45f)),
+                                                CapsuleShape,
+                                            )
+                                            .padding(horizontal = 8.dp, vertical = 3.dp),
+                                    ) {
+                                        Text(
+                                            text = "Edited",
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFF6366F1),
+                                            ),
+                                        )
+                                    }
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .clip(CapsuleShape)
+                                        .background(scheme.primary.copy(alpha = if (dark) 0.20f else 0.12f))
+                                        .border(BorderStroke(1.dp, scheme.primary.copy(alpha = 0.4f)), CapsuleShape)
+                                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                                ) {
+                                    Text(
+                                        text = plateInfo.customPurpose ?: visit.visitType.label,
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            color = scheme.primary,
+                                        ),
+                                    )
+                                }
+                            }
+                            if (visit.syncState != SyncState.Synced) {
+                                LiquidSyncBadge(state = visit.syncState)
+                            }
                         }
                     }
 
@@ -1305,6 +1694,60 @@ private fun GateDepartureFullPage(
                         )
                     }
 
+                    // Exact arrival / departure timestamps
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(extras.glassFill)
+                            .border(BorderStroke(1.dp, extras.glassBorder), RoundedCornerShape(12.dp))
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                text = "Arrived",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = scheme.onSurfaceVariant,
+                                ),
+                            )
+                            Text(
+                                text = formatVisitTimestamp(visit.arrivedAt),
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    color = scheme.onSurface,
+                                ),
+                            )
+                        }
+                        visit.departedAt?.let { depAt ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text(
+                                    text = "Departed",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = scheme.onSurfaceVariant,
+                                    ),
+                                )
+                                Text(
+                                    text = formatVisitTimestamp(depAt),
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        color = scheme.onSurface,
+                                    ),
+                                )
+                            }
+                        }
+                    }
+
                     // Elapsed stay highlight - Centered
                     Box(
                         modifier = Modifier
@@ -1330,7 +1773,7 @@ private fun GateDepartureFullPage(
                                     modifier = Modifier.size(15.dp),
                                 )
                                 Text(
-                                    text = "Total Time On Yard",
+                                    text = if (isCompleted) "Total Stay Duration" else "Total Time On Yard",
                                     style = MaterialTheme.typography.labelSmall.copy(
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.SemiBold,
@@ -1339,7 +1782,7 @@ private fun GateDepartureFullPage(
                                 )
                             }
                             Text(
-                                text = formatElapsedDuration(visit.arrivedAt),
+                                text = stayDurationLabel,
                                 style = MaterialTheme.typography.headlineMedium.copy(
                                     fontWeight = FontWeight.ExtraBold,
                                     color = scheme.onSurface,
@@ -1374,126 +1817,250 @@ private fun GateDepartureFullPage(
                             }
                         }
                     }
-                }
-            }
 
-            // CARD 2: INSPECTION AND DEPARTURE NOTES IF AVAILABLE
-            GlassCard(modifier = Modifier.fillMaxWidth(), contentPadding = 16) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = stringResource(R.string.lbl_departure_notes),
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontWeight = FontWeight.ExtraBold,
-                            color = scheme.primary,
-                            letterSpacing = 0.8.sp,
-                        ),
-                    )
-                    LiquidTextInput(
-                        value = departureNotes,
-                        onValueChange = { departureNotes = it.take(300) },
-                        placeholder = stringResource(R.string.hint_departure_notes),
-                        maxLines = 3,
-                        dark = dark,
-                    )
-                }
-            }
-
-            // BOTTOM ACTIONS: Confirm Departure on top, Cancel at the bottom
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                // Confirm Departure button on top
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(CapsuleShape)
-                        .background(
-                            Brush.linearGradient(
-                                listOf(
-                                    Color(0xFFEF4444),
-                                    Color(0xFFDC2626),
+                    if (!displayArrivalNotes.isNullOrBlank()) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(extras.glassFill)
+                                .border(BorderStroke(1.dp, extras.glassBorder), RoundedCornerShape(10.dp))
+                                .padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(3.dp),
+                        ) {
+                            Text(
+                                text = "ARRIVAL NOTES",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    letterSpacing = 0.6.sp,
+                                    color = scheme.primary,
                                 ),
-                            ),
-                        )
-                        .border(
-                            BorderStroke(
-                                1.dp,
-                                Brush.verticalGradient(
-                                    listOf(
-                                        Color.White.copy(alpha = 0.5f),
-                                        Color.Transparent,
-                                    ),
+                            )
+                            Text(
+                                text = displayArrivalNotes,
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = scheme.onSurface,
                                 ),
-                            ),
-                            CapsuleShape,
-                        )
-                        .clickable { showConfirmDialog = true }
-                        .drawBehind {
-                            drawRoundRect(
-                                Brush.verticalGradient(
-                                    listOf(
-                                        Color.White.copy(alpha = 0.5f),
-                                        Color.Transparent,
-                                    ),
-                                ),
-                                size = Size(size.width, 2.dp.toPx()),
-                                cornerRadius = androidx.compose.ui.geometry.CornerRadius(999.dp.toPx()),
                             )
                         }
-                        .padding(vertical = 14.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Logout,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Text(
-                            text = stringResource(R.string.btn_confirm_departure),
-                            style = MaterialTheme.typography.labelLarge.copy(
-                                fontWeight = FontWeight.ExtraBold,
-                                color = Color.White,
-                                letterSpacing = 0.3.sp,
-                            ),
-                        )
                     }
-                }
 
-                // Cancel button at the bottom
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(CapsuleShape)
-                        .background(extras.glassFill)
-                        .border(BorderStroke(1.dp, extras.glassBorder), CapsuleShape)
-                        .clickable(onClick = onBack)
-                        .padding(vertical = 12.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = stringResource(R.string.btn_cancel),
-                        style = MaterialTheme.typography.labelMedium.copy(
-                            fontWeight = FontWeight.SemiBold,
-                            color = scheme.onSurfaceVariant,
-                        ),
-                    )
+                    if (isCompleted && !visit.departureNotes.isNullOrBlank()) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(extras.glassFill)
+                                .border(BorderStroke(1.dp, extras.glassBorder), RoundedCornerShape(10.dp))
+                                .padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(3.dp),
+                        ) {
+                            Text(
+                                text = "DEPARTURE NOTES",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    letterSpacing = 0.6.sp,
+                                    color = Color(0xFFEF4444),
+                                ),
+                            )
+                            Text(
+                                text = visit.departureNotes,
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = scheme.onSurface,
+                                ),
+                            )
+                        }
+                    }
                 }
             }
 
-            Spacer(Modifier.height(80.dp))
+            // CARD 2: CARGO & SEALS REGISTER
+            CargoAndSealsReadOnlySection(visit = visit, dark = dark)
+
+            // CARD 3: AUDIT & CORRECTION HISTORY
+            if (history.isNotEmpty()) {
+                VisitCorrectionHistoryCard(history = history, dark = dark)
+            }
+
+            // DEPARTURE INPUT & ACTIONS (ONLY WHEN OPEN)
+            if (!isCompleted) {
+                if (canDepart) {
+                    GlassCard(modifier = Modifier.fillMaxWidth(), contentPadding = 16) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = stringResource(R.string.lbl_departure_notes),
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = scheme.primary,
+                                    letterSpacing = 0.8.sp,
+                                ),
+                            )
+                            LiquidTextInput(
+                                value = departureNotes,
+                                onValueChange = { departureNotes = it.take(300) },
+                                placeholder = stringResource(R.string.hint_departure_notes),
+                                maxLines = 3,
+                                dark = dark,
+                            )
+                        }
+                    }
+
+                    if (!departureError.isNullOrBlank()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(scheme.error.copy(alpha = if (dark) 0.18f else 0.10f))
+                                .border(BorderStroke(1.dp, scheme.error.copy(alpha = 0.45f)), RoundedCornerShape(12.dp))
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                        ) {
+                            Text(
+                                text = departureError,
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = scheme.error,
+                                ),
+                            )
+                        }
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(CapsuleShape)
+                                .background(
+                                    Brush.linearGradient(
+                                        listOf(
+                                            Color(0xFFEF4444).copy(alpha = if (isSubmittingDeparture) 0.65f else 1f),
+                                            Color(0xFFDC2626).copy(alpha = if (isSubmittingDeparture) 0.65f else 1f),
+                                        ),
+                                    ),
+                                )
+                                .border(
+                                    BorderStroke(
+                                        1.dp,
+                                        Brush.verticalGradient(
+                                            listOf(
+                                                Color.White.copy(alpha = 0.5f),
+                                                Color.Transparent,
+                                            ),
+                                        ),
+                                    ),
+                                    CapsuleShape,
+                                )
+                                .clickable(enabled = !isSubmittingDeparture) { showConfirmDialog = true }
+                                .drawBehind {
+                                    drawRoundRect(
+                                        Brush.verticalGradient(
+                                            listOf(
+                                                Color.White.copy(alpha = 0.5f),
+                                                Color.Transparent,
+                                            ),
+                                        ),
+                                        size = Size(size.width, 2.dp.toPx()),
+                                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(999.dp.toPx()),
+                                    )
+                                }
+                                .padding(vertical = 14.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (isSubmittingDeparture) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = Color.White,
+                                    )
+                                    Text(
+                                        text = "Logging Departure...",
+                                        style = MaterialTheme.typography.labelLarge.copy(
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = Color.White,
+                                        ),
+                                    )
+                                }
+                            } else {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.Logout,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                    Text(
+                                        text = stringResource(R.string.btn_confirm_departure),
+                                        style = MaterialTheme.typography.labelLarge.copy(
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = Color.White,
+                                            letterSpacing = 0.3.sp,
+                                        ),
+                                    )
+                                }
+                            }
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(CapsuleShape)
+                                .background(extras.glassFill)
+                                .border(BorderStroke(1.dp, extras.glassBorder), CapsuleShape)
+                                .clickable(onClick = onBack)
+                                .padding(vertical = 12.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = stringResource(R.string.btn_cancel),
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = scheme.onSurfaceVariant,
+                                ),
+                            )
+                        }
+                    }
+                } else {
+                    GlassCard(modifier = Modifier.fillMaxWidth(), contentPadding = 14) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = null,
+                                tint = scheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Text(
+                                text = "View-only access. Departure sign-off requires gate runner permissions.",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = scheme.onSurfaceVariant,
+                                ),
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(24.dp))
         }
     }
 
     // Confirmation Modal Dialog
-    if (showConfirmDialog) {
+    if (showConfirmDialog && !isCompleted && canDepart) {
         Dialog(
             onDismissRequest = { showConfirmDialog = false },
             properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -1547,7 +2114,7 @@ private fun GateDepartureFullPage(
                             contentAlignment = Alignment.Center,
                         ) {
                             Icon(
-                                imageVector = Icons.Default.Logout,
+                                imageVector = Icons.AutoMirrored.Filled.Logout,
                                 contentDescription = null,
                                 tint = Color(0xFFEF4444),
                                 modifier = Modifier.size(26.dp),
@@ -1602,15 +2169,15 @@ private fun GateDepartureFullPage(
                             )
                             if (plateInfo.horsePlate != plateInfo.frontPlate) {
                                 InternationalPlateBadge(
-                                countryCode = plateInfo.country,
-                                plateNumber = plateInfo.horsePlate,
-                                plateLabel = "HORSE",
-                                dark = dark,
-                            )
+                                    countryCode = plateInfo.country,
+                                    plateNumber = plateInfo.horsePlate,
+                                    plateLabel = "HORSE",
+                                    dark = dark,
+                                )
                             }
                             visit.reference?.let { ref ->
                                 Text(
-                                    text = "Token: #$ref  •  Stay: ${formatElapsedDuration(visit.arrivedAt)}",
+                                    text = "Token: #$ref  •  Stay: $stayDurationLabel",
                                     style = MaterialTheme.typography.labelSmall.copy(
                                         fontSize = 11.sp,
                                         fontFamily = FontFamily.Monospace,
@@ -1625,7 +2192,6 @@ private fun GateDepartureFullPage(
                             modifier = Modifier.fillMaxWidth(),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            // Confirm Departure button on top
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -1650,9 +2216,9 @@ private fun GateDepartureFullPage(
                                         ),
                                         CapsuleShape,
                                     )
-                                    .clickable {
+                                    .clickable(enabled = !isSubmittingDeparture) {
                                         showConfirmDialog = false
-                                        onConfirm(departureNotes.ifBlank { null })
+                                        onConfirmDeparture(departureNotes.ifBlank { null })
                                     }
                                     .padding(vertical = 12.dp),
                                 contentAlignment = Alignment.Center,
@@ -1677,7 +2243,6 @@ private fun GateDepartureFullPage(
                                 }
                             }
 
-                            // Cancel button at the bottom
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -1702,6 +2267,20 @@ private fun GateDepartureFullPage(
             }
         }
     }
+
+    if (showCorrectionDialog && canEditVisit) {
+        VisitCorrectionDialog(
+            visit = visit,
+            isSubmitting = isSubmittingCorrection,
+            errorMessage = (correctionOutcome as? AuthResult.Failure)?.error?.message,
+            dark = dark,
+            onDismiss = {
+                showCorrectionDialog = false
+                onClearCorrectionOutcome()
+            },
+            onSave = onSaveCorrection,
+        )
+    }
 }
 
 // =============================================================================
@@ -1710,18 +2289,25 @@ private fun GateDepartureFullPage(
 
 @Composable
 private fun LiquidVisitsHeader(
+    lastSyncedAt: Instant?,
+    isSyncing: Boolean,
     onMenuClick: () -> Unit,
     dark: Boolean,
 ) {
     val scheme = MaterialTheme.colorScheme
     val extras = TruckParkExtras.colors
+    val syncStatusText = when {
+        isSyncing -> "Syncing..."
+        lastSyncedAt != null -> "Synced ${formatVisitTimestamp(lastSyncedAt)}"
+        else -> null
+    }
 
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column {
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 text = stringResource(R.string.visits_title),
                 style = MaterialTheme.typography.titleLarge.copy(
@@ -1737,6 +2323,34 @@ private fun LiquidVisitsHeader(
                     fontSize = 12.sp,
                 ),
             )
+            if (syncStatusText != null) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    if (isSyncing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(10.dp),
+                            strokeWidth = 1.5.dp,
+                            color = scheme.primary,
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.CloudDone,
+                            contentDescription = null,
+                            tint = Color(0xFF10B981),
+                            modifier = Modifier.size(12.dp),
+                        )
+                    }
+                    Text(
+                        text = syncStatusText,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = 10.sp,
+                            color = scheme.onSurfaceVariant,
+                        ),
+                    )
+                }
+            }
         }
 
         Box(
@@ -1758,6 +2372,63 @@ private fun LiquidVisitsHeader(
                 tint = scheme.onSurface,
                 modifier = Modifier.size(18.dp),
             )
+        }
+    }
+}
+
+@Composable
+private fun YardTabSwitch(
+    openCount: Int,
+    completedCount: Int,
+    showCompleted: Boolean,
+    onSelect: (Boolean) -> Unit,
+    dark: Boolean,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val extras = TruckParkExtras.colors
+    val selectedBrush = if (dark) {
+        Brush.linearGradient(listOf(Color(0xFF6366F1), Color(0xFF38BDF8)))
+    } else {
+        Brush.linearGradient(listOf(Color(0xFF4F46E5), Color(0xFF0284C7)))
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(CapsuleShape)
+            .background(extras.glassFill)
+            .border(BorderStroke(1.dp, extras.glassBorder), CapsuleShape)
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        listOf(
+            Triple("On Yard ($openCount)", false, !showCompleted),
+            Triple("Departed ($completedCount)", true, showCompleted),
+        ).forEach { (label, completedFlag, selected) ->
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(CapsuleShape)
+                    .then(
+                        if (selected) Modifier.background(selectedBrush)
+                        else Modifier.background(Color.Transparent),
+                    )
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) { onSelect(completedFlag) }
+                    .padding(vertical = 8.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                        fontSize = 12.sp,
+                        color = if (selected) Color.White else scheme.onSurfaceVariant,
+                    ),
+                )
+            }
         }
     }
 }
@@ -1881,186 +2552,190 @@ private fun MetricStatDivider(dark: Boolean) {
 
 @Composable
 private fun LiquidSyncBanner(
-    pendingCount: Int,
+    banner: SyncAlertBanner,
     isSyncing: Boolean,
-    bannerMessage: String?,
-    onSyncClick: () -> Unit,
+    onRetryClick: () -> Unit,
+    onReviewConflicts: () -> Unit,
     onDismissMessage: () -> Unit,
     dark: Boolean,
 ) {
     val scheme = MaterialTheme.colorScheme
-    val amberAccent = Color(0xFFF59E0B)
+    val accent = when (banner.severity) {
+        SyncAlertSeverity.Info -> scheme.primary
+        SyncAlertSeverity.Warning -> Color(0xFFF59E0B)
+        SyncAlertSeverity.Error -> scheme.error
+    }
+    val title = when {
+        banner.needsConflictReview -> "Conflict Review Required"
+        banner.requiresSignIn -> "Session Expired"
+        banner.severity == SyncAlertSeverity.Error -> "Sync Error"
+        banner.severity == SyncAlertSeverity.Warning -> "Sync Warning"
+        else -> "Sync Information"
+    }
 
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        if (pendingCount > 0) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(amberAccent.copy(alpha = if (dark) 0.14f else 0.10f))
-                    .border(
-                        BorderStroke(
-                            1.dp,
-                            Brush.linearGradient(
-                                listOf(
-                                    amberAccent.copy(alpha = 0.6f),
-                                    amberAccent.copy(alpha = 0.2f),
-                                ),
-                            ),
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(accent.copy(alpha = if (dark) 0.16f else 0.10f))
+            .border(
+                BorderStroke(
+                    1.dp,
+                    Brush.linearGradient(
+                        listOf(
+                            accent.copy(alpha = 0.65f),
+                            accent.copy(alpha = 0.25f),
                         ),
-                        RoundedCornerShape(16.dp),
-                    )
-                    .drawBehind {
-                        drawRoundRect(
-                            Brush.verticalGradient(
-                                listOf(
-                                    amberAccent.copy(alpha = 0.15f),
-                                    Color.Transparent,
-                                ),
-                            ),
-                            size = Size(size.width, 2.dp.toPx()),
-                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(16.dp.toPx()),
-                        )
-                    }
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(30.dp)
-                                .clip(CircleShape)
-                                .background(amberAccent.copy(alpha = 0.2f)),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.CloudUpload,
-                                contentDescription = null,
-                                tint = amberAccent,
-                                modifier = Modifier.size(16.dp),
-                            )
-                        }
-                        Column {
-                            Text(
-                                text = stringResource(R.string.lbl_pending_sync, pendingCount),
-                                style = MaterialTheme.typography.labelMedium.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    color = scheme.onSurface,
-                                ),
-                            )
-                            Text(
-                                text = stringResource(R.string.lbl_offline_local),
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    fontSize = 11.sp,
-                                    color = scheme.onSurfaceVariant,
-                                ),
-                            )
-                        }
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .clip(CapsuleShape)
-                            .background(
-                                Brush.linearGradient(
-                                    listOf(
-                                        Color(0xFFF59E0B),
-                                        Color(0xFFD97706),
-                                    ),
-                                ),
-                            )
-                            .clickable(
-                                enabled = !isSyncing,
-                                onClick = onSyncClick,
-                            )
-                            .drawBehind {
-                                drawRoundRect(
-                                    Brush.verticalGradient(
-                                        listOf(
-                                            Color.White.copy(alpha = 0.45f),
-                                            Color.Transparent,
-                                        ),
-                                    ),
-                                    size = Size(size.width, 2.dp.toPx()),
-                                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(999.dp.toPx()),
-                                )
-                            }
-                            .padding(horizontal = 12.dp, vertical = 7.dp),
-                    ) {
-                        if (isSyncing) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(14.dp),
-                                strokeWidth = 2.dp,
-                                color = Color.White,
-                            )
-                        } else {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Refresh,
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(14.dp),
-                                )
-                                Text(
-                                    text = stringResource(R.string.btn_sync_now),
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        fontWeight = FontWeight.ExtraBold,
-                                        letterSpacing = 0.3.sp,
-                                    ),
-                                    color = Color.White,
-                                )
-                            }
-                        }
-                    }
-                }
+                    ),
+                ),
+                RoundedCornerShape(16.dp),
+            )
+            .drawBehind {
+                drawRoundRect(
+                    Brush.verticalGradient(
+                        listOf(
+                            accent.copy(alpha = 0.18f),
+                            Color.Transparent,
+                        ),
+                    ),
+                    size = Size(size.width, 2.dp.toPx()),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(16.dp.toPx()),
+                )
             }
-        }
-
-        if (bannerMessage != null) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(scheme.surfaceVariant.copy(alpha = if (dark) 0.5f else 0.7f))
-                    .border(
-                        BorderStroke(1.dp, scheme.outlineVariant.copy(alpha = 0.35f)),
-                        RoundedCornerShape(12.dp),
-                    )
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top,
             ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Text(
-                        text = bannerMessage,
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
-                        color = scheme.onSurface,
-                        modifier = Modifier.weight(1f),
-                    )
                     Box(
                         modifier = Modifier
+                            .size(30.dp)
                             .clip(CircleShape)
-                            .clickable(onClick = onDismissMessage)
-                            .padding(4.dp),
+                            .background(accent.copy(alpha = 0.2f)),
+                        contentAlignment = Alignment.Center,
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Dismiss",
-                            tint = scheme.onSurfaceVariant,
-                            modifier = Modifier.size(14.dp),
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = accent,
+                            modifier = Modifier.size(16.dp),
                         )
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.labelLarge.copy(
+                                fontWeight = FontWeight.ExtraBold,
+                                color = scheme.onSurface,
+                            ),
+                        )
+                        Text(
+                            text = banner.message,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontSize = 12.sp,
+                                color = scheme.onSurfaceVariant,
+                            ),
+                        )
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .clickable(onClick = onDismissMessage)
+                        .padding(4.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Dismiss",
+                        tint = scheme.onSurfaceVariant,
+                        modifier = Modifier.size(15.dp),
+                    )
+                }
+            }
+
+            if (banner.showRetry || banner.needsConflictReview) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (banner.showRetry) {
+                        Box(
+                            modifier = Modifier
+                                .clip(CapsuleShape)
+                                .background(accent)
+                                .clickable(
+                                    enabled = !isSyncing,
+                                    onClick = onRetryClick,
+                                )
+                                .padding(horizontal = 12.dp, vertical = 7.dp),
+                        ) {
+                            if (isSyncing) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(13.dp),
+                                        strokeWidth = 2.dp,
+                                        color = Color.White,
+                                    )
+                                    Text(
+                                        text = "Retrying...",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = Color.White,
+                                        ),
+                                    )
+                                }
+                            } else {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Refresh,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(14.dp),
+                                    )
+                                    Text(
+                                        text = "Retry Sync",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = Color.White,
+                                        ),
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if (banner.needsConflictReview) {
+                        Box(
+                            modifier = Modifier
+                                .clip(CapsuleShape)
+                                .background(scheme.surfaceVariant.copy(alpha = if (dark) 0.55f else 0.75f))
+                                .border(BorderStroke(1.dp, accent.copy(alpha = 0.5f)), CapsuleShape)
+                                .clickable(onClick = onReviewConflicts)
+                                .padding(horizontal = 12.dp, vertical = 7.dp),
+                        ) {
+                            Text(
+                                text = "Review Conflicts",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = accent,
+                                ),
+                            )
+                        }
                     }
                 }
             }
@@ -2279,6 +2954,7 @@ private fun LiquidFilterChip(
 @Composable
 private fun LiquidActiveVisitCard(
     visit: TruckVisit,
+    elapsedTick: Int,
     onCardClick: () -> Unit,
     dark: Boolean,
 ) {
@@ -2296,7 +2972,13 @@ private fun LiquidActiveVisitCard(
         VisitType.Other -> scheme.onSurfaceVariant
     }
 
-    val displayNotes = cleanDisplayNotes(visit.arrivalNotes)
+    val displayNotes = remember(visit.arrivalNotes) {
+        cleanDisplayNotes(visit.arrivalNotes)
+    }
+    val durationLabel = remember(visit.arrivedAt, visit.departedAt, elapsedTick) {
+        formatElapsedDuration(visit.arrivedAt, visit.departedAt ?: Instant.now())
+    }
+    val isCompleted = visit.status == VisitStatus.Completed
 
     GlassCard(
         modifier = Modifier
@@ -2309,7 +2991,7 @@ private fun LiquidActiveVisitCard(
         contentPadding = 16,
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            // Row 1: Stacked International Front & Horse Plate Badges + Visit Type Pill
+            // Row 1: Stacked International Front & Horse Plate Badges + Visit Type / Sync / Edited Pills
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -2319,7 +3001,6 @@ private fun LiquidActiveVisitCard(
                 Column(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    // Front Plate Badge
                     InternationalPlateBadge(
                         countryCode = plateInfo.country,
                         plateNumber = plateInfo.frontPlate,
@@ -2327,7 +3008,6 @@ private fun LiquidActiveVisitCard(
                         dark = dark,
                     )
 
-                    // Horse Plate Badge if different: placed underneath Front plate
                     if (plateInfo.horsePlate != plateInfo.frontPlate) {
                         InternationalPlateBadge(
                             countryCode = plateInfo.country,
@@ -2338,35 +3018,70 @@ private fun LiquidActiveVisitCard(
                     }
                 }
 
-                // Visit Type Glass Capsule
-                Box(
-                    modifier = Modifier
-                        .clip(CapsuleShape)
-                        .background(typeColor.copy(alpha = if (dark) 0.18f else 0.12f))
-                        .border(
-                            BorderStroke(1.dp, typeColor.copy(alpha = 0.45f)),
-                            CapsuleShape,
-                        )
-                        .padding(horizontal = 9.dp, vertical = 4.dp),
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(5.dp),
                     ) {
+                        if (visit.isEdited) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(CapsuleShape)
+                                    .background(Color(0xFF6366F1).copy(alpha = if (dark) 0.22f else 0.12f))
+                                    .border(
+                                        BorderStroke(0.8.dp, Color(0xFF6366F1).copy(alpha = 0.45f)),
+                                        CapsuleShape,
+                                    )
+                                    .padding(horizontal = 7.dp, vertical = 3.dp),
+                            ) {
+                                Text(
+                                    text = "Edited",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 9.sp,
+                                        color = Color(0xFF6366F1),
+                                    ),
+                                )
+                            }
+                        }
+
                         Box(
                             modifier = Modifier
-                                .size(5.dp)
-                                .clip(CircleShape)
-                                .background(typeColor),
-                        )
-                        Text(
-                            text = plateInfo.customPurpose ?: visit.visitType.label,
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 10.sp,
-                                color = typeColor,
-                            ),
-                        )
+                                .clip(CapsuleShape)
+                                .background(typeColor.copy(alpha = if (dark) 0.18f else 0.12f))
+                                .border(
+                                    BorderStroke(1.dp, typeColor.copy(alpha = 0.45f)),
+                                    CapsuleShape,
+                                )
+                                .padding(horizontal = 9.dp, vertical = 4.dp),
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(5.dp)
+                                        .clip(CircleShape)
+                                        .background(typeColor),
+                                )
+                                Text(
+                                    text = plateInfo.customPurpose ?: visit.visitType.label,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 10.sp,
+                                        color = typeColor,
+                                    ),
+                                )
+                            }
+                        }
+                    }
+
+                    if (visit.syncState != SyncState.Synced) {
+                        LiquidSyncBadge(state = visit.syncState)
                     }
                 }
             }
@@ -2460,6 +3175,73 @@ private fun LiquidActiveVisitCard(
                 }
             }
 
+            // Row 2.5: Cargo & Seal Summary Chips if recorded
+            if (!visit.cargoDescription.isNullOrBlank() || visit.cargoItems.isNotEmpty() || visit.seals.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (!visit.cargoDescription.isNullOrBlank() || visit.cargoItems.isNotEmpty()) {
+                        val cargoSummary = when {
+                            !visit.cargoDescription.isNullOrBlank() -> visit.cargoDescription
+                            else -> "${visit.cargoItems.size} cargo item(s)"
+                        }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f, fill = false)
+                                .clip(CapsuleShape)
+                                .background(scheme.surfaceVariant.copy(alpha = if (dark) 0.40f else 0.55f))
+                                .padding(horizontal = 8.dp, vertical = 3.dp),
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Inventory2,
+                                    contentDescription = null,
+                                    tint = scheme.primary,
+                                    modifier = Modifier.size(11.dp),
+                                )
+                                Text(
+                                    text = cargoSummary,
+                                    maxLines = 1,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontSize = 10.sp,
+                                        color = scheme.onSurface,
+                                    ),
+                                )
+                            }
+                        }
+                    }
+                    if (visit.seals.isNotEmpty()) {
+                        val flaggedCount = visit.seals.count { it.condition != SealCondition.Intact }
+                        val sealColor = if (flaggedCount > 0) scheme.error else Color(0xFF10B981)
+                        Box(
+                            modifier = Modifier
+                                .clip(CapsuleShape)
+                                .background(sealColor.copy(alpha = if (dark) 0.20f else 0.12f))
+                                .border(BorderStroke(0.8.dp, sealColor.copy(alpha = 0.40f)), CapsuleShape)
+                                .padding(horizontal = 8.dp, vertical = 3.dp),
+                        ) {
+                            Text(
+                                text = if (flaggedCount > 0) {
+                                    "${visit.seals.size} seal(s) • $flaggedCount flagged"
+                                } else {
+                                    "${visit.seals.size} seal(s) intact"
+                                },
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = sealColor,
+                                ),
+                            )
+                        }
+                    }
+                }
+            }
+
             // Row 3: Inspection and Cargo Notes
             displayNotes?.let { notes ->
                 Box(
@@ -2495,7 +3277,7 @@ private fun LiquidActiveVisitCard(
                     ),
             )
 
-            // Row 4: Elapsed Duration + Depart Button
+            // Row 4: Elapsed / Stay Duration + Details CTA
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -2512,7 +3294,11 @@ private fun LiquidActiveVisitCard(
                         modifier = Modifier.size(14.dp),
                     )
                     Text(
-                        text = formatElapsedDuration(visit.arrivedAt),
+                        text = if (isCompleted && visit.departedAt != null) {
+                            "Stay $durationLabel • Out ${formatVisitTimestamp(visit.departedAt)}"
+                        } else {
+                            durationLabel
+                        },
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 11.sp,
@@ -2718,7 +3504,7 @@ private fun LiquidDepartureButton(
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Icon(
-                imageVector = Icons.Default.Logout,
+                imageVector = Icons.AutoMirrored.Filled.Logout,
                 contentDescription = null,
                 tint = if (dark) Color(0xFFFCA5A5) else Color(0xFFDC2626),
                 modifier = Modifier.size(13.dp),
@@ -2870,7 +3656,7 @@ private fun LiquidArrivalFab(
 // -----------------------------------------------------------------------------
 
 @Composable
-private fun LiquidTextInput(
+internal fun LiquidTextInput(
     value: String,
     onValueChange: (String) -> Unit,
     placeholder: String,
@@ -2962,7 +3748,7 @@ private fun LiquidTextInput(
  * User starts typing numbers directly without needing to type '+'.
  */
 @Composable
-private fun LiquidInternationalPhoneInput(
+internal fun LiquidInternationalPhoneInput(
     phoneDigits: String,
     onPhoneDigitsChange: (String) -> Unit,
     isValid: Boolean,
@@ -3085,7 +3871,7 @@ private fun LiquidInternationalPhoneInput(
 }
 
 @Composable
-private fun LiquidActionButton(
+internal fun LiquidActionButton(
     text: String,
     enabled: Boolean,
     dark: Boolean,
@@ -3170,10 +3956,22 @@ private fun LiquidActionButton(
 @Composable
 private fun LiquidEmptyVisitsState(
     isFiltered: Boolean,
+    showCompleted: Boolean,
+    canArrive: Boolean,
     dark: Boolean,
     onLogArrivalClick: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
+    val titleText = when {
+        isFiltered -> "No Matching Trucks"
+        showCompleted -> "No Departed Trucks Yet"
+        else -> stringResource(R.string.empty_visits_title)
+    }
+    val subtitleText = when {
+        isFiltered -> "Try adjusting your search query or switching the visit type filter."
+        showCompleted -> "Recently departed vehicles will appear here after clearance."
+        else -> stringResource(R.string.empty_visits_subtitle)
+    }
 
     Box(
         modifier = Modifier
@@ -3227,7 +4025,7 @@ private fun LiquidEmptyVisitsState(
                 }
 
                 Text(
-                    text = if (isFiltered) "No Matching Trucks" else stringResource(R.string.empty_visits_title),
+                    text = titleText,
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.ExtraBold,
                         color = scheme.onSurface,
@@ -3235,8 +4033,7 @@ private fun LiquidEmptyVisitsState(
                 )
 
                 Text(
-                    text = if (isFiltered) "Try adjusting your search query or switching the visit type filter."
-                    else stringResource(R.string.empty_visits_subtitle),
+                    text = subtitleText,
                     style = MaterialTheme.typography.bodySmall.copy(
                         fontSize = 12.sp,
                         color = scheme.onSurfaceVariant,
@@ -3245,7 +4042,7 @@ private fun LiquidEmptyVisitsState(
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 )
 
-                if (!isFiltered) {
+                if (!isFiltered && !showCompleted && canArrive) {
                     Spacer(Modifier.height(4.dp))
                     Box(
                         modifier = Modifier
@@ -3290,8 +4087,12 @@ private fun LiquidEmptyVisitsState(
 // HELPERS
 // -----------------------------------------------------------------------------
 
-private fun formatElapsedDuration(arrivedAt: Instant): String {
-    val duration = Duration.between(arrivedAt, Instant.now())
+internal fun formatElapsedDuration(
+    arrivedAt: Instant,
+    endAt: Instant = Instant.now(),
+): String {
+    val raw = Duration.between(arrivedAt, endAt)
+    val duration = if (raw.isNegative) Duration.ZERO else raw
     val hours = duration.toHours()
     val minutes = duration.toMinutes() % 60
     return when {

@@ -39,6 +39,26 @@ data class TruckVisitEntity(
     val syncError: String?,
     val rowVersion: Long,
     val updatedAt: Long,
+    val cargoDescription: String? = null,
+    val cargoJson: String? = null,
+    val sealsJson: String? = null,
+    val conflictServerJson: String? = null,
+    val isEdited: Boolean = false,
+)
+
+@Entity(
+    tableName = "visit_corrections",
+    indices = [Index(value = ["visitId"])],
+)
+data class VisitCorrectionEntity(
+    @PrimaryKey val id: String,
+    val visitId: String,
+    val editedByName: String?,
+    val editedAt: Long,
+    val reason: String?,
+    val changesSummary: String,
+    val wasCritical: Boolean,
+    val syncState: String,
 )
 
 /** One pending operation to push to the server, processed oldest first. */
@@ -50,10 +70,12 @@ data class SyncQueueEntity(
     val createdAt: Long,
     val attempts: Int = 0,
     val lastError: String? = null,
+    val payloadJson: String? = null,
 ) {
     companion object {
         const val ARRIVE = "ARRIVE"
         const val DEPART = "DEPART"
+        const val CORRECT = "CORRECT"
     }
 }
 
