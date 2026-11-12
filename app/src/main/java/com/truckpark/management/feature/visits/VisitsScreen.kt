@@ -104,6 +104,7 @@ import com.truckpark.management.domain.models.ArrivalDraft
 import com.truckpark.management.domain.models.ArrivalOutcome
 import com.truckpark.management.domain.models.AuthUser
 import com.truckpark.management.domain.models.CargoItem
+import com.truckpark.management.domain.models.CustomVisitField
 import com.truckpark.management.domain.models.PlateInfo
 import com.truckpark.management.domain.models.SealCondition
 import com.truckpark.management.domain.models.SyncAlertBanner
@@ -112,12 +113,17 @@ import com.truckpark.management.domain.models.SyncState
 import com.truckpark.management.domain.models.TruckVisit
 import com.truckpark.management.domain.models.VisitCorrectionDraft
 import com.truckpark.management.domain.models.VisitCorrectionRecord
+import com.truckpark.management.domain.models.VisitFieldCategory
 import com.truckpark.management.domain.models.VisitSeal
 import com.truckpark.management.domain.models.VisitStatus
 import com.truckpark.management.domain.models.VisitType
 import com.truckpark.management.domain.models.cleanDisplayNotes
+import com.truckpark.management.domain.models.countryFlagForCode
+import com.truckpark.management.domain.models.countryNameForCode
+import com.truckpark.management.domain.models.encodeCustomFieldsTags
 import com.truckpark.management.domain.models.extractPlateInfo
 import com.truckpark.management.domain.models.normalizePlate
+import com.truckpark.management.domain.models.sanitizeTagPart
 import com.truckpark.management.feature.ocr.OcrScanMode
 import com.truckpark.management.feature.ocr.PlateScannerDialog
 import java.time.Duration
@@ -136,7 +142,11 @@ private val PlateShape = RoundedCornerShape(8.dp)
 private sealed interface VisitsScreenMode {
     data object List : VisitsScreenMode
     data object Arrival : VisitsScreenMode
-    data class Departure(val visitId: String, val fallbackVisit: TruckVisit) : VisitsScreenMode
+    data class Departure(
+        val visitId: String,
+        val fallbackVisit: TruckVisit,
+        val focusDeparture: Boolean = false,
+    ) : VisitsScreenMode
 }
 
 @Composable
@@ -212,6 +222,7 @@ fun VisitsScreen(
                     uiState = uiState,
                     elapsedTick = elapsedTick,
                     canArrive = canArrive,
+                    canDepart = canDepart,
                     dark = dark,
                     onMenuClick = onMenuClick,
                     onLogArrivalClick = {
@@ -221,7 +232,12 @@ fun VisitsScreen(
                     onVisitClick = { visit ->
                         viewModel.clearDepartureOutcome()
                         viewModel.clearCorrectionOutcome()
-                        screenMode = VisitsScreenMode.Departure(visit.id, visit)
+                        screenMode = VisitsScreenMode.Departure(visit.id, visit, focusDeparture = false)
+                    },
+                    onQuickDepartClick = { visit ->
+                        viewModel.clearDepartureOutcome()
+                        viewModel.clearCorrectionOutcome()
+                        screenMode = VisitsScreenMode.Departure(visit.id, visit, focusDeparture = true)
                     },
                     onShowCompletedChanged = { viewModel.onShowCompletedChanged(it) },
                     onSearchQueryChanged = { viewModel.onSearchQueryChanged(it) },
@@ -272,6 +288,7 @@ fun VisitsScreen(
                     visit = liveVisit,
                     history = history,
                     elapsedTick = elapsedTick,
+                    focusDeparture = mode.focusDeparture,
                     canDepart = canDepart,
                     canEditVisit = if (liveVisit.status == VisitStatus.Completed) canCorrectCritical else canEditOpen,
                     canResolveConflicts = canResolveConflicts,
@@ -286,8 +303,8 @@ fun VisitsScreen(
                         viewModel.clearDepartureOutcome()
                         viewModel.clearCorrectionOutcome()
                     },
-                    onConfirmDeparture = { notes ->
-                        viewModel.recordDeparture(liveVisit.id, notes)
+                    onConfirmDeparture = { notes, updatedSeals ->
+                        viewModel.recordDeparture(liveVisit.id, notes, updatedSeals)
                     },
                     onSaveCorrection = { draft ->
                         viewModel.recordCorrection(
@@ -318,10 +335,12 @@ private fun VisitsListContent(
     uiState: VisitsUiState,
     elapsedTick: Int,
     canArrive: Boolean,
+    canDepart: Boolean,
     dark: Boolean,
     onMenuClick: () -> Unit,
     onLogArrivalClick: () -> Unit,
     onVisitClick: (TruckVisit) -> Unit,
+    onQuickDepartClick: (TruckVisit) -> Unit,
     onShowCompletedChanged: (Boolean) -> Unit,
     onSearchQueryChanged: (String) -> Unit,
     onTypeFilterSelected: (VisitType?) -> Unit,
@@ -417,7 +436,9 @@ private fun VisitsListContent(
                         LiquidActiveVisitCard(
                             visit = visit,
                             elapsedTick = elapsedTick,
+                            canDepart = canDepart,
                             onCardClick = { onVisitClick(visit) },
+                            onDepartClick = { onQuickDepartClick(visit) },
                             dark = dark,
                         )
                     }
@@ -449,6 +470,7 @@ private fun GateArrivalFullPage(
 
     // 3 MANDATORY (NON-OPTIONAL) FIELDS:
     var countryCodeInput by remember { mutableStateOf("ZM") }
+    var customCountryReasonInput by remember { mutableStateOf("") }
     var frontPlateInput by remember { mutableStateOf("") }
     var horsePlateInput by remember { mutableStateOf("") }
 
@@ -468,6 +490,7 @@ private fun GateArrivalFullPage(
     var cargoDescriptionInput by remember { mutableStateOf("") }
     var cargoItems by remember { mutableStateOf<List<CargoItem>>(emptyList()) }
     var seals by remember { mutableStateOf<List<VisitSeal>>(emptyList()) }
+    var customFields by remember { mutableStateOf<List<CustomVisitField>>(emptyList()) }
     var pendingDuplicateDraft by remember { mutableStateOf<ArrivalDraft?>(null) }
     var pendingDuplicateVisit by remember { mutableStateOf<TruckVisit?>(null) }
 
@@ -600,7 +623,7 @@ private fun GateArrivalFullPage(
                         ),
                     )
 
-                    // Field 1: Country Code
+                    // Field 1: Country Code (SADC selection + manual entry + default Zambia ZM)
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -623,12 +646,11 @@ private fun GateArrivalFullPage(
                                 ),
                             )
                         }
-                        LiquidTextInput(
-                            value = countryCodeInput,
-                            onValueChange = { countryCodeInput = it.take(4).uppercase() },
-                            placeholder = "ZM",
-                            isMonospace = true,
-                            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
+                        SadcCountrySelectorField(
+                            countryCode = countryCodeInput,
+                            onCountryCodeChange = { countryCodeInput = it },
+                            customCountryReason = customCountryReasonInput,
+                            onCustomCountryReasonChange = { customCountryReasonInput = it },
                             dark = dark,
                         )
                     }
@@ -840,6 +862,13 @@ private fun GateArrivalFullPage(
                             }
                         }
                     }
+
+                    CategoryCustomFieldsEditor(
+                        category = VisitFieldCategory.Vehicle,
+                        customFields = customFields,
+                        onCustomFieldsChange = { customFields = it },
+                        dark = dark,
+                    )
                 }
             }
 
@@ -1041,6 +1070,13 @@ private fun GateArrivalFullPage(
                                 }
                             }
                         }
+
+                        CategoryCustomFieldsEditor(
+                            category = VisitFieldCategory.Transporter,
+                            customFields = customFields,
+                            onCustomFieldsChange = { customFields = it },
+                            dark = dark,
+                        )
                     }
                 }
             }
@@ -1126,6 +1162,13 @@ private fun GateArrivalFullPage(
                             )
                         }
                     }
+
+                    CategoryCustomFieldsEditor(
+                        category = VisitFieldCategory.Purpose,
+                        customFields = customFields,
+                        onCustomFieldsChange = { customFields = it },
+                        dark = dark,
+                    )
                 }
             }
 
@@ -1181,6 +1224,13 @@ private fun GateArrivalFullPage(
                             ),
                         )
                     }
+
+                    CategoryCustomFieldsEditor(
+                        category = VisitFieldCategory.Driver,
+                        customFields = customFields,
+                        onCustomFieldsChange = { customFields = it },
+                        dark = dark,
+                    )
                 }
             }
 
@@ -1192,6 +1242,8 @@ private fun GateArrivalFullPage(
                 onCargoItemsChange = { cargoItems = it },
                 seals = seals,
                 onSealsChange = { seals = it },
+                customFields = customFields,
+                onCustomFieldsChange = { customFields = it },
                 dark = dark,
             )
 
@@ -1211,6 +1263,12 @@ private fun GateArrivalFullPage(
                         onValueChange = { notesInput = it.take(300) },
                         placeholder = stringResource(R.string.hint_arrival_notes),
                         maxLines = 3,
+                        dark = dark,
+                    )
+                    CategoryCustomFieldsEditor(
+                        category = VisitFieldCategory.Notes,
+                        customFields = customFields,
+                        onCustomFieldsChange = { customFields = it },
                         dark = dark,
                     )
                 }
@@ -1255,13 +1313,19 @@ private fun GateArrivalFullPage(
                         }
 
                         val fullPhone = if (driverPhoneDigits.isNotEmpty()) "+$driverPhoneDigits" else null
+                        val countryReasonTag = if (customCountryReasonInput.isNotBlank()) {
+                            "[CountryReason: ${sanitizeTagPart(customCountryReasonInput)}] "
+                        } else ""
                         val purposeTag = if (selectedType == VisitType.Other && customPurposeInput.isNotBlank()) {
-                            "[Purpose: ${customPurposeInput.trim()}] "
+                            "[Purpose: ${sanitizeTagPart(customPurposeInput)}] "
                         } else ""
                         val transporterTag = if (transporterInput.isNotBlank()) {
-                            "[Transporter: ${transporterInput.trim()}] "
+                            "[Transporter: ${sanitizeTagPart(transporterInput)}] "
                         } else ""
-                        val combinedNotes = "[Country: $cleanCountry] [Front: $cleanFrontPlate] [Horse: $cleanHorsePlate] $transporterTag$purposeTag${notesInput.trim()}".trim()
+                        val customFieldsTags = encodeCustomFieldsTags(customFields).let {
+                            if (it.isNotBlank()) "$it " else ""
+                        }
+                        val combinedNotes = "[Country: $cleanCountry] [Front: $cleanFrontPlate] [Horse: $cleanHorsePlate] $countryReasonTag$transporterTag$purposeTag$customFieldsTags${notesInput.trim()}".trim()
 
                         val draft = ArrivalDraft(
                             plateNumber = cleanFrontPlate.take(20),
@@ -1425,6 +1489,7 @@ private fun GateDepartureFullPage(
     visit: TruckVisit,
     history: List<VisitCorrectionRecord>,
     elapsedTick: Int,
+    focusDeparture: Boolean = false,
     canDepart: Boolean,
     canEditVisit: Boolean,
     canResolveConflicts: Boolean,
@@ -1435,7 +1500,7 @@ private fun GateDepartureFullPage(
     isSyncBusy: Boolean,
     onClearCorrectionOutcome: () -> Unit,
     onBack: () -> Unit,
-    onConfirmDeparture: (notes: String?) -> Unit,
+    onConfirmDeparture: (notes: String?, updatedSeals: List<VisitSeal>?) -> Unit,
     onSaveCorrection: (VisitCorrectionDraft) -> Unit,
     onResolveConflictKeepDevice: () -> Unit,
     onResolveConflictUseServer: () -> Unit,
@@ -1444,18 +1509,33 @@ private fun GateDepartureFullPage(
     val scheme = MaterialTheme.colorScheme
     val extras = TruckParkExtras.colors
     var departureNotes by remember(visit.id) { mutableStateOf("") }
+    var exitPlateInput by remember(visit.id) { mutableStateOf("") }
+    var departureSeals by remember(visit.id, visit.seals) { mutableStateOf(visit.seals) }
+    var departureCustomFields by remember(visit.id) { mutableStateOf<List<CustomVisitField>>(emptyList()) }
+    var showExitPlateScanner by remember { mutableStateOf(false) }
     var showConfirmDialog by remember { mutableStateOf(false) }
     var showCorrectionDialog by remember { mutableStateOf(false) }
+    val scrollState = rememberScrollState()
 
     val isCompleted = visit.status == VisitStatus.Completed
-    val plateInfo = remember(visit.plateNumber, visit.arrivalNotes) {
-        extractPlateInfo(visit.plateNumber, visit.arrivalNotes)
+    val plateInfo = remember(visit.plateNumber, visit.arrivalNotes, visit.departureNotes) {
+        extractPlateInfo(visit.plateNumber, visit.arrivalNotes, visit.departureNotes)
     }
     val displayArrivalNotes = remember(visit.arrivalNotes) {
         cleanDisplayNotes(visit.arrivalNotes)
     }
+    val displayDepartureNotes = remember(visit.departureNotes) {
+        cleanDisplayNotes(visit.departureNotes)
+    }
     val stayDurationLabel = remember(visit.arrivedAt, visit.departedAt, elapsedTick) {
         formatElapsedDuration(visit.arrivedAt, visit.departedAt ?: Instant.now())
+    }
+
+    LaunchedEffect(focusDeparture) {
+        if (focusDeparture && !isCompleted) {
+            delay(150)
+            scrollState.animateScrollTo(scrollState.maxValue)
+        }
     }
 
     LaunchedEffect(correctionOutcome) {
@@ -1562,7 +1642,7 @@ private fun GateDepartureFullPage(
         Column(
             modifier = Modifier
                 .weight(1f)
-                .verticalScroll(rememberScrollState()),
+                .verticalScroll(scrollState),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             if (visit.syncState == SyncState.Conflict) {
@@ -1662,6 +1742,24 @@ private fun GateDepartureFullPage(
                         }
                     }
 
+                    val countryFlag = countryFlagForCode(plateInfo.country)
+                    val countryLabel = countryNameForCode(plateInfo.country)
+                        ?: plateInfo.customCountryReason?.takeIf { it.isNotBlank() }
+                        ?: plateInfo.country
+                    Text(
+                        text = "$countryFlag Country: $countryLabel (${plateInfo.country})",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            color = scheme.onSurfaceVariant,
+                        ),
+                    )
+
+                    CategoryCustomFieldsReadOnlyList(
+                        category = VisitFieldCategory.Vehicle,
+                        customFields = plateInfo.customFields,
+                        dark = dark,
+                    )
+
                     plateInfo.transporter?.let { carrier ->
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -1682,6 +1780,18 @@ private fun GateDepartureFullPage(
                             )
                         }
                     }
+
+                    CategoryCustomFieldsReadOnlyList(
+                        category = VisitFieldCategory.Transporter,
+                        customFields = plateInfo.customFields,
+                        dark = dark,
+                    )
+
+                    CategoryCustomFieldsReadOnlyList(
+                        category = VisitFieldCategory.Purpose,
+                        customFields = plateInfo.customFields,
+                        dark = dark,
+                    )
 
                     visit.reference?.let { ref ->
                         Text(
@@ -1818,6 +1928,12 @@ private fun GateDepartureFullPage(
                         }
                     }
 
+                    CategoryCustomFieldsReadOnlyList(
+                        category = VisitFieldCategory.Driver,
+                        customFields = plateInfo.customFields,
+                        dark = dark,
+                    )
+
                     if (!displayArrivalNotes.isNullOrBlank()) {
                         Column(
                             modifier = Modifier
@@ -1846,38 +1962,91 @@ private fun GateDepartureFullPage(
                         }
                     }
 
-                    if (isCompleted && !visit.departureNotes.isNullOrBlank()) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(extras.glassFill)
-                                .border(BorderStroke(1.dp, extras.glassBorder), RoundedCornerShape(10.dp))
-                                .padding(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(3.dp),
-                        ) {
-                            Text(
-                                text = "DEPARTURE NOTES",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    letterSpacing = 0.6.sp,
-                                    color = Color(0xFFEF4444),
-                                ),
-                            )
-                            Text(
-                                text = visit.departureNotes,
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    color = scheme.onSurface,
-                                ),
-                            )
+                    CategoryCustomFieldsReadOnlyList(
+                        category = VisitFieldCategory.Notes,
+                        customFields = plateInfo.customFields,
+                        dark = dark,
+                    )
+
+                    if (isCompleted) {
+                        plateInfo.exitVerifiedPlate?.takeIf { it.isNotBlank() }?.let { exitPlate ->
+                            val matchesArrival = exitPlate == plateInfo.frontPlate || exitPlate == plateInfo.horsePlate
+                            val badgeColor = if (matchesArrival) Color(0xFF10B981) else Color(0xFFF59E0B)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(badgeColor.copy(alpha = if (dark) 0.16f else 0.10f))
+                                    .border(BorderStroke(1.dp, badgeColor.copy(alpha = 0.45f)), RoundedCornerShape(10.dp))
+                                    .padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Icon(
+                                    imageVector = if (matchesArrival) Icons.Default.Check else Icons.Default.Warning,
+                                    contentDescription = null,
+                                    tint = badgeColor,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Column {
+                                    Text(
+                                        text = if (matchesArrival) {
+                                            "EXIT PLATE VERIFIED: $exitPlate"
+                                        } else {
+                                            "EXIT PLATE MISMATCH: $exitPlate (Expected ${plateInfo.frontPlate})"
+                                        },
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = badgeColor,
+                                        ),
+                                    )
+                                }
+                            }
                         }
+
+                        if (!displayDepartureNotes.isNullOrBlank()) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(extras.glassFill)
+                                    .border(BorderStroke(1.dp, extras.glassBorder), RoundedCornerShape(10.dp))
+                                    .padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(3.dp),
+                            ) {
+                                Text(
+                                    text = "DEPARTURE NOTES",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        letterSpacing = 0.6.sp,
+                                        color = Color(0xFFEF4444),
+                                    ),
+                                )
+                                Text(
+                                    text = displayDepartureNotes,
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        color = scheme.onSurface,
+                                    ),
+                                )
+                            }
+                        }
+
+                        CategoryCustomFieldsReadOnlyList(
+                            category = VisitFieldCategory.Departure,
+                            customFields = plateInfo.customFields,
+                            dark = dark,
+                        )
                     }
                 }
             }
 
             // CARD 2: CARGO & SEALS REGISTER
-            CargoAndSealsReadOnlySection(visit = visit, dark = dark)
+            CargoAndSealsReadOnlySection(
+                visit = visit,
+                customFields = plateInfo.customFields,
+                dark = dark,
+            )
 
             // CARD 3: AUDIT & CORRECTION HISTORY
             if (history.isNotEmpty()) {
@@ -1887,6 +2056,193 @@ private fun GateDepartureFullPage(
             // DEPARTURE INPUT & ACTIONS (ONLY WHEN OPEN)
             if (!isCompleted) {
                 if (canDepart) {
+                    // 1. EXIT PLATE OCR VERIFICATION CARD
+                    val normalizedExit = normalizePlate(exitPlateInput)
+                    val isExitMatched = normalizedExit.isNotEmpty() &&
+                        (normalizedExit == plateInfo.frontPlate || normalizedExit == plateInfo.horsePlate)
+                    val isExitMismatched = normalizedExit.isNotEmpty() && !isExitMatched
+
+                    GlassCard(modifier = Modifier.fillMaxWidth(), contentPadding = 16) {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = "EXIT PLATE VERIFICATION",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = scheme.primary,
+                                        letterSpacing = 0.8.sp,
+                                    ),
+                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    modifier = Modifier
+                                        .clip(CapsuleShape)
+                                        .background(scheme.primary.copy(alpha = if (dark) 0.16f else 0.10f))
+                                        .border(BorderStroke(0.8.dp, scheme.primary.copy(alpha = 0.35f)), CapsuleShape)
+                                        .clickable { showExitPlateScanner = true }
+                                        .padding(horizontal = 9.dp, vertical = 4.dp),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.CameraAlt,
+                                        contentDescription = "Scan Exit Plate",
+                                        tint = scheme.primary,
+                                        modifier = Modifier.size(13.dp),
+                                    )
+                                    Text(
+                                        text = "Scan Exit Plate",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 11.sp,
+                                            color = scheme.primary,
+                                        ),
+                                    )
+                                }
+                            }
+
+                            LiquidTextInput(
+                                value = exitPlateInput,
+                                onValueChange = { exitPlateInput = it.uppercase().take(20) },
+                                placeholder = "Scan or enter exiting plate (Expected: ${plateInfo.frontPlate})",
+                                isMonospace = true,
+                                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
+                                dark = dark,
+                            )
+
+                            Row(
+                                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(CapsuleShape)
+                                        .background(
+                                            if (normalizedExit == plateInfo.frontPlate) {
+                                                Color(0xFF10B981).copy(alpha = if (dark) 0.25f else 0.16f)
+                                            } else {
+                                                extras.glassFill
+                                            },
+                                        )
+                                        .border(
+                                            BorderStroke(
+                                                1.dp,
+                                                if (normalizedExit == plateInfo.frontPlate) Color(0xFF10B981) else extras.glassBorder,
+                                            ),
+                                            CapsuleShape,
+                                        )
+                                        .clickable { exitPlateInput = plateInfo.frontPlate }
+                                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                                ) {
+                                    Text(
+                                        text = "✓ Verify Front (${plateInfo.frontPlate})",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (normalizedExit == plateInfo.frontPlate) Color(0xFF10B981) else scheme.onSurface,
+                                        ),
+                                    )
+                                }
+
+                                if (plateInfo.horsePlate != plateInfo.frontPlate) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(CapsuleShape)
+                                            .background(
+                                                if (normalizedExit == plateInfo.horsePlate) {
+                                                    Color(0xFF10B981).copy(alpha = if (dark) 0.25f else 0.16f)
+                                                } else {
+                                                    extras.glassFill
+                                                },
+                                            )
+                                            .border(
+                                                BorderStroke(
+                                                    1.dp,
+                                                    if (normalizedExit == plateInfo.horsePlate) Color(0xFF10B981) else extras.glassBorder,
+                                                ),
+                                                CapsuleShape,
+                                            )
+                                            .clickable { exitPlateInput = plateInfo.horsePlate }
+                                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                                    ) {
+                                        Text(
+                                            text = "✓ Verify Horse (${plateInfo.horsePlate})",
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontFamily = FontFamily.Monospace,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (normalizedExit == plateInfo.horsePlate) Color(0xFF10B981) else scheme.onSurface,
+                                            ),
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (isExitMatched) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(Color(0xFF10B981).copy(alpha = if (dark) 0.18f else 0.12f))
+                                        .border(BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.5f)), RoundedCornerShape(10.dp))
+                                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = null,
+                                        tint = Color(0xFF10B981),
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                    Text(
+                                        text = "Verified: Exit plate ($normalizedExit) matches check-in registration.",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF10B981),
+                                        ),
+                                    )
+                                }
+                            } else if (isExitMismatched) {
+                                val warnColor = Color(0xFFF59E0B)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(warnColor.copy(alpha = if (dark) 0.18f else 0.12f))
+                                        .border(BorderStroke(1.dp, warnColor.copy(alpha = 0.5f)), RoundedCornerShape(10.dp))
+                                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Warning,
+                                        contentDescription = null,
+                                        tint = warnColor,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                    Text(
+                                        text = "Mismatch: Scanned '$normalizedExit' differs from Front (${plateInfo.frontPlate}) / Horse (${plateInfo.horsePlate}).",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            color = warnColor,
+                                        ),
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // 2. EXIT SEAL & CARGO VERIFICATION CARD
+                    DepartureSealVerificationCard(
+                        seals = departureSeals,
+                        onSealsChange = { departureSeals = it },
+                        dark = dark,
+                    )
+
+                    // 3. DEPARTURE NOTES & CUSTOM COLUMNS CARD
                     GlassCard(modifier = Modifier.fillMaxWidth(), contentPadding = 16) {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(
@@ -1902,6 +2258,12 @@ private fun GateDepartureFullPage(
                                 onValueChange = { departureNotes = it.take(300) },
                                 placeholder = stringResource(R.string.hint_departure_notes),
                                 maxLines = 3,
+                                dark = dark,
+                            )
+                            CategoryCustomFieldsEditor(
+                                category = VisitFieldCategory.Departure,
+                                customFields = departureCustomFields,
+                                onCustomFieldsChange = { departureCustomFields = it },
                                 dark = dark,
                             )
                         }
@@ -2218,7 +2580,21 @@ private fun GateDepartureFullPage(
                                     )
                                     .clickable(enabled = !isSubmittingDeparture) {
                                         showConfirmDialog = false
-                                        onConfirmDeparture(departureNotes.ifBlank { null })
+                                        val cleanExitPlate = normalizePlate(exitPlateInput).takeIf { it.isNotBlank() }
+                                        val customDepTags = encodeCustomFieldsTags(departureCustomFields)
+                                        val cleanDepText = departureNotes.trim()
+                                        val combinedDepartureNotes = buildString {
+                                            if (cleanExitPlate != null) {
+                                                append("[ExitPlate: ${sanitizeTagPart(cleanExitPlate)}] ")
+                                            }
+                                            if (customDepTags.isNotBlank()) {
+                                                append("$customDepTags ")
+                                            }
+                                            if (cleanDepText.isNotBlank()) {
+                                                append(cleanDepText)
+                                            }
+                                        }.trim().takeIf { it.isNotBlank() }
+                                        onConfirmDeparture(combinedDepartureNotes, departureSeals)
                                     }
                                     .padding(vertical = 12.dp),
                                 contentAlignment = Alignment.Center,
@@ -2266,6 +2642,18 @@ private fun GateDepartureFullPage(
                 }
             }
         }
+    }
+
+    if (showExitPlateScanner) {
+        PlateScannerDialog(
+            targetTitle = "Scan Exit Plate (${plateInfo.frontPlate})",
+            scanMode = OcrScanMode.PLATE,
+            onDismiss = { showExitPlateScanner = false },
+            onPlateScanned = { scanned ->
+                exitPlateInput = scanned.uppercase().take(20)
+                showExitPlateScanner = false
+            },
+        )
     }
 
     if (showCorrectionDialog && canEditVisit) {
@@ -2955,13 +3343,15 @@ private fun LiquidFilterChip(
 private fun LiquidActiveVisitCard(
     visit: TruckVisit,
     elapsedTick: Int,
+    canDepart: Boolean = false,
     onCardClick: () -> Unit,
+    onDepartClick: () -> Unit = onCardClick,
     dark: Boolean,
 ) {
     val scheme = MaterialTheme.colorScheme
 
-    val plateInfo = remember(visit.plateNumber, visit.arrivalNotes) {
-        extractPlateInfo(visit.plateNumber, visit.arrivalNotes)
+    val plateInfo = remember(visit.plateNumber, visit.arrivalNotes, visit.departureNotes) {
+        extractPlateInfo(visit.plateNumber, visit.arrivalNotes, visit.departureNotes)
     }
 
     val typeColor = when (visit.visitType) {
@@ -3086,35 +3476,56 @@ private fun LiquidActiveVisitCard(
                 }
             }
 
-            // Row 1.5: Transporter Badge if present
-            plateInfo.transporter?.let { carrier ->
+            // Row 1.5: Transporter & Custom Country Detail Badges if present
+            if (plateInfo.transporter != null || !plateInfo.customCountryReason.isNullOrBlank()) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .clip(CapsuleShape)
-                            .background(scheme.primary.copy(alpha = if (dark) 0.16f else 0.08f))
-                            .border(BorderStroke(0.8.dp, scheme.primary.copy(alpha = 0.35f)), CapsuleShape)
-                            .padding(horizontal = 9.dp, vertical = 3.dp),
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    plateInfo.transporter?.let { carrier ->
+                        Box(
+                            modifier = Modifier
+                                .clip(CapsuleShape)
+                                .background(scheme.primary.copy(alpha = if (dark) 0.16f else 0.08f))
+                                .border(BorderStroke(0.8.dp, scheme.primary.copy(alpha = 0.35f)), CapsuleShape)
+                                .padding(horizontal = 9.dp, vertical = 3.dp),
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.LocalShipping,
-                                contentDescription = null,
-                                tint = scheme.primary,
-                                modifier = Modifier.size(12.dp),
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.LocalShipping,
+                                    contentDescription = null,
+                                    tint = scheme.primary,
+                                    modifier = Modifier.size(12.dp),
+                                )
+                                Text(
+                                    text = carrier,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 11.sp,
+                                        color = scheme.primary,
+                                    ),
+                                )
+                            }
+                        }
+                    }
+
+                    plateInfo.customCountryReason?.takeIf { it.isNotBlank() }?.let { reason ->
+                        Box(
+                            modifier = Modifier
+                                .clip(CapsuleShape)
+                                .background(scheme.surfaceVariant.copy(alpha = if (dark) 0.40f else 0.55f))
+                                .padding(horizontal = 8.dp, vertical = 3.dp),
+                        ) {
                             Text(
-                                text = carrier,
+                                text = "${countryFlagForCode(plateInfo.country)} $reason",
                                 style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 11.sp,
-                                    color = scheme.primary,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = scheme.onSurfaceVariant,
                                 ),
                             )
                         }
@@ -3242,6 +3653,56 @@ private fun LiquidActiveVisitCard(
                 }
             }
 
+            // Row 2.7: Custom Columns Summary Chips if recorded
+            if (plateInfo.customFields.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val visibleFields = plateInfo.customFields.take(3)
+                    visibleFields.forEach { field ->
+                        Box(
+                            modifier = Modifier
+                                .clip(CapsuleShape)
+                                .background(scheme.primary.copy(alpha = if (dark) 0.14f else 0.08f))
+                                .border(BorderStroke(0.8.dp, scheme.primary.copy(alpha = 0.30f)), CapsuleShape)
+                                .padding(horizontal = 8.dp, vertical = 3.dp),
+                        ) {
+                            Text(
+                                text = "${field.columnName}: ${field.value}",
+                                maxLines = 1,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = scheme.onSurface,
+                                ),
+                            )
+                        }
+                    }
+                    val extraCount = plateInfo.customFields.size - visibleFields.size
+                    if (extraCount > 0) {
+                        Box(
+                            modifier = Modifier
+                                .clip(CapsuleShape)
+                                .background(scheme.surfaceVariant.copy(alpha = if (dark) 0.40f else 0.55f))
+                                .padding(horizontal = 7.dp, vertical = 3.dp),
+                        ) {
+                            Text(
+                                text = "+$extraCount more",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = scheme.primary,
+                                ),
+                            )
+                        }
+                    }
+                }
+            }
+
             // Row 3: Inspection and Cargo Notes
             displayNotes?.let { notes ->
                 Box(
@@ -3319,26 +3780,38 @@ private fun LiquidActiveVisitCard(
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(3.dp),
-                    modifier = Modifier
-                        .clip(CapsuleShape)
-                        .background(scheme.primary.copy(alpha = if (dark) 0.14f else 0.08f))
-                        .padding(horizontal = 9.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text(
-                        text = "Details",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            color = scheme.primary,
-                        ),
-                    )
-                    Icon(
-                        imageVector = Icons.Default.ChevronRight,
-                        contentDescription = null,
-                        tint = scheme.primary,
-                        modifier = Modifier.size(13.dp),
-                    )
+                    if (!isCompleted && canDepart) {
+                        LiquidDepartureButton(
+                            onClick = onDepartClick,
+                            dark = dark,
+                        )
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp),
+                        modifier = Modifier
+                            .clip(CapsuleShape)
+                            .background(scheme.primary.copy(alpha = if (dark) 0.14f else 0.08f))
+                            .padding(horizontal = 9.dp, vertical = 4.dp),
+                    ) {
+                        Text(
+                            text = "Details",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                color = scheme.primary,
+                            ),
+                        )
+                        Icon(
+                            imageVector = Icons.Default.ChevronRight,
+                            contentDescription = null,
+                            tint = scheme.primary,
+                            modifier = Modifier.size(13.dp),
+                        )
+                    }
                 }
             }
         }
@@ -3411,7 +3884,8 @@ private fun InternationalPlateBadge(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(5.dp),
         ) {
-            // Dynamic Country strip (e.g. ZM, ZA, TZ, CD, ZW)
+            // Dynamic Country strip (e.g. 🇿🇲 ZM, 🇿🇦 ZA, 🇹🇿 TZ, 🇨🇩 CD, 🇿🇼 ZW)
+            val resolvedCode = countryCode.ifBlank { "ZM" }
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(3.dp))
@@ -3419,7 +3893,7 @@ private fun InternationalPlateBadge(
                     .padding(horizontal = 4.dp, vertical = 1.dp),
             ) {
                 Text(
-                    text = countryCode.ifBlank { "ZM" },
+                    text = "${countryFlagForCode(resolvedCode)} $resolvedCode",
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontWeight = FontWeight.ExtraBold,
                         fontSize = 9.sp,

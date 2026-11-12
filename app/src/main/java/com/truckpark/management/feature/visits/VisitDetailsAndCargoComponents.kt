@@ -76,16 +76,23 @@ import androidx.core.content.ContextCompat
 import com.truckpark.management.core.designsystem.components.GlassCard
 import com.truckpark.management.core.designsystem.theme.TruckParkExtras
 import com.truckpark.management.domain.models.CargoItem
+import com.truckpark.management.domain.models.CustomVisitField
+import com.truckpark.management.domain.models.SADC_COUNTRIES
 import com.truckpark.management.domain.models.SealCondition
 import com.truckpark.management.domain.models.TruckVisit
 import com.truckpark.management.domain.models.VisitCorrectionDraft
 import com.truckpark.management.domain.models.VisitCorrectionRecord
+import com.truckpark.management.domain.models.VisitFieldCategory
 import com.truckpark.management.domain.models.VisitSeal
 import com.truckpark.management.domain.models.VisitStatus
 import com.truckpark.management.domain.models.VisitType
 import com.truckpark.management.domain.models.cleanDisplayNotes
+import com.truckpark.management.domain.models.countryFlagForCode
+import com.truckpark.management.domain.models.countryNameForCode
 import com.truckpark.management.domain.models.extractPlateInfo
 import com.truckpark.management.domain.models.normalizePlate
+import com.truckpark.management.feature.ocr.OcrScanMode
+import com.truckpark.management.feature.ocr.PlateScannerDialog
 import java.io.File
 import java.io.FileOutputStream
 import java.time.Instant
@@ -139,24 +146,38 @@ internal fun CargoAndSealsEditorCard(
     onCargoItemsChange: (List<CargoItem>) -> Unit,
     seals: List<VisitSeal>,
     onSealsChange: (List<VisitSeal>) -> Unit,
+    customFields: List<CustomVisitField> = emptyList(),
+    onCustomFieldsChange: (List<CustomVisitField>) -> Unit = {},
     dark: Boolean,
     initiallyExpanded: Boolean = false,
 ) {
     val context = LocalContext.current
     val scheme = MaterialTheme.colorScheme
     val extras = TruckParkExtras.colors
-    var expanded by remember { mutableStateOf(initiallyExpanded || cargoDescription.isNotBlank() || cargoItems.isNotEmpty() || seals.isNotEmpty()) }
+    val cargoCustomCount = customFields.count { it.category == VisitFieldCategory.Cargo }
+    var expanded by remember {
+        mutableStateOf(
+            initiallyExpanded ||
+                cargoDescription.isNotBlank() ||
+                cargoItems.isNotEmpty() ||
+                seals.isNotEmpty() ||
+                cargoCustomCount > 0,
+        )
+    }
 
     // Inline add-cargo-item form state
     var showAddCargoForm by remember { mutableStateOf(false) }
     var newCargoDesc by remember { mutableStateOf("") }
     var newCargoQty by remember { mutableStateOf("") }
     var newCargoUnit by remember { mutableStateOf("Bags") }
+    var customCargoUnitReason by remember { mutableStateOf("") }
+    var newCargoNotes by remember { mutableStateOf("") }
 
     // Inline add-seal form state
     var showAddSealForm by remember { mutableStateOf(false) }
     var newSealNumber by remember { mutableStateOf("") }
     var newSealType by remember { mutableStateOf("Bolt") }
+    var customSealTypeReason by remember { mutableStateOf("") }
     var newSealCondition by remember { mutableStateOf(SealCondition.Intact) }
     var newSealNotes by remember { mutableStateOf("") }
 
@@ -344,21 +365,43 @@ internal fun CargoAndSealsEditorCard(
                                     )
                                 }
                             }
+                            if (newCargoUnit.equals("Other", ignoreCase = true) || newCargoUnit !in CARGO_UNITS) {
+                                LiquidTextInput(
+                                    value = customCargoUnitReason,
+                                    onValueChange = { customCargoUnitReason = it.take(80) },
+                                    placeholder = "Specify other unit / reason (e.g., Crates, Bundles, Loose)",
+                                    dark = dark,
+                                )
+                            }
+                            LiquidTextInput(
+                                value = newCargoNotes,
+                                onValueChange = { newCargoNotes = it.take(120) },
+                                placeholder = "Cargo item notes / remarks (optional)",
+                                dark = dark,
+                            )
                             LiquidActionButton(
                                 text = "Save Cargo Item",
                                 enabled = newCargoDesc.isNotBlank(),
                                 dark = dark,
                                 onClick = {
+                                    val resolvedUnit = if (newCargoUnit.equals("Other", ignoreCase = true) && customCargoUnitReason.isNotBlank()) {
+                                        "Other (${customCargoUnitReason.trim()})"
+                                    } else {
+                                        newCargoUnit.trim()
+                                    }
                                     onCargoItemsChange(
                                         cargoItems + CargoItem(
                                             id = UUID.randomUUID().toString(),
                                             description = newCargoDesc.trim(),
                                             quantity = newCargoQty.trim().takeIf { it.isNotBlank() },
-                                            unit = newCargoUnit.trim().takeIf { it.isNotBlank() },
+                                            unit = resolvedUnit.takeIf { it.isNotBlank() },
+                                            notes = newCargoNotes.trim().takeIf { it.isNotBlank() },
                                         ),
                                     )
                                     newCargoDesc = ""
                                     newCargoQty = ""
+                                    customCargoUnitReason = ""
+                                    newCargoNotes = ""
                                     showAddCargoForm = false
                                 },
                             )
@@ -388,6 +431,15 @@ internal fun CargoAndSealsEditorCard(
                                     Text(
                                         text = qtyText,
                                         style = MaterialTheme.typography.labelSmall.copy(
+                                            color = scheme.onSurfaceVariant,
+                                        ),
+                                    )
+                                }
+                                item.notes?.takeIf { it.isNotBlank() }?.let { note ->
+                                    Text(
+                                        text = note,
+                                        style = MaterialTheme.typography.bodySmall.copy(
+                                            fontSize = 11.sp,
                                             color = scheme.onSurfaceVariant,
                                         ),
                                     )
@@ -463,6 +515,14 @@ internal fun CargoAndSealsEditorCard(
                                     )
                                 }
                             }
+                            if (newSealType.equals("Other", ignoreCase = true)) {
+                                LiquidTextInput(
+                                    value = customSealTypeReason,
+                                    onValueChange = { customSealTypeReason = it.take(80) },
+                                    placeholder = "Specify other seal type / reason (e.g., Padlock, Electronic, Lead)",
+                                    dark = dark,
+                                )
+                            }
                             Text(
                                 text = "Condition",
                                 style = MaterialTheme.typography.labelSmall.copy(color = scheme.onSurfaceVariant),
@@ -482,11 +542,15 @@ internal fun CargoAndSealsEditorCard(
                                     )
                                 }
                             }
-                            if (newSealCondition != SealCondition.Intact) {
+                            if (newSealCondition != SealCondition.Intact || newSealType.equals("Other", ignoreCase = true)) {
                                 LiquidTextInput(
                                     value = newSealNotes,
                                     onValueChange = { newSealNotes = it.take(150) },
-                                    placeholder = "Damage or missing seal remarks",
+                                    placeholder = if (newSealCondition != SealCondition.Intact) {
+                                        "Damage or missing seal remarks"
+                                    } else {
+                                        "Other seal reason / remarks (optional)"
+                                    },
                                     dark = dark,
                                 )
                             }
@@ -495,16 +559,22 @@ internal fun CargoAndSealsEditorCard(
                                 enabled = newSealNumber.isNotBlank(),
                                 dark = dark,
                                 onClick = {
+                                    val resolvedSealType = if (newSealType.equals("Other", ignoreCase = true) && customSealTypeReason.isNotBlank()) {
+                                        "Other (${customSealTypeReason.trim()})"
+                                    } else {
+                                        newSealType
+                                    }
                                     onSealsChange(
                                         seals + VisitSeal(
                                             id = UUID.randomUUID().toString(),
                                             sealNumber = newSealNumber.trim(),
-                                            sealType = newSealType,
+                                            sealType = resolvedSealType,
                                             condition = newSealCondition,
                                             notes = newSealNotes.trim().takeIf { it.isNotBlank() },
                                         ),
                                     )
                                     newSealNumber = ""
+                                    customSealTypeReason = ""
                                     newSealNotes = ""
                                     newSealCondition = SealCondition.Intact
                                     showAddSealForm = false
@@ -617,6 +687,13 @@ internal fun CargoAndSealsEditorCard(
                             }
                         }
                     }
+
+                    CategoryCustomFieldsEditor(
+                        category = VisitFieldCategory.Cargo,
+                        customFields = customFields,
+                        onCustomFieldsChange = onCustomFieldsChange,
+                        dark = dark,
+                    )
                 }
             }
         }
@@ -626,11 +703,14 @@ internal fun CargoAndSealsEditorCard(
 @Composable
 internal fun CargoAndSealsReadOnlySection(
     visit: TruckVisit,
+    customFields: List<CustomVisitField> = emptyList(),
     dark: Boolean,
 ) {
+    val cargoCustomFields = customFields.filter { it.category == VisitFieldCategory.Cargo }
     val hasCargoOrSeals = !visit.cargoDescription.isNullOrBlank() ||
         visit.cargoItems.isNotEmpty() ||
-        visit.seals.isNotEmpty()
+        visit.seals.isNotEmpty() ||
+        cargoCustomFields.isNotEmpty()
     if (!hasCargoOrSeals) return
 
     val scheme = MaterialTheme.colorScheme
@@ -748,6 +828,12 @@ internal fun CargoAndSealsReadOnlySection(
                     }
                 }
             }
+
+            CategoryCustomFieldsReadOnlyList(
+                category = VisitFieldCategory.Cargo,
+                customFields = customFields,
+                dark = dark,
+            )
         }
     }
 
@@ -986,15 +1072,17 @@ internal fun VisitCorrectionDialog(
 ) {
     val scheme = MaterialTheme.colorScheme
     val extras = TruckParkExtras.colors
-    val initialInfo = remember(visit.id, visit.plateNumber, visit.arrivalNotes) {
-        extractPlateInfo(visit.plateNumber, visit.arrivalNotes)
+    val initialInfo = remember(visit.id, visit.plateNumber, visit.arrivalNotes, visit.departureNotes) {
+        extractPlateInfo(visit.plateNumber, visit.arrivalNotes, visit.departureNotes)
     }
 
-    var countryCode by remember { mutableStateOf(initialInfo.country) }
+    var countryCode by remember { mutableStateOf(initialInfo.country.ifBlank { "ZM" }) }
+    var customCountryReason by remember { mutableStateOf(initialInfo.customCountryReason.orEmpty()) }
     var frontPlate by remember { mutableStateOf(initialInfo.frontPlate) }
     var horsePlate by remember { mutableStateOf(initialInfo.horsePlate) }
     var transporter by remember { mutableStateOf(initialInfo.transporter.orEmpty()) }
     var visitType by remember { mutableStateOf(visit.visitType) }
+    var customPurpose by remember { mutableStateOf(initialInfo.customPurpose.orEmpty()) }
     var driverName by remember { mutableStateOf(visit.driverName.orEmpty()) }
     var driverPhoneDigits by remember {
         mutableStateOf(visit.driverPhone?.filter { it.isDigit() }.orEmpty())
@@ -1002,11 +1090,16 @@ internal fun VisitCorrectionDialog(
     var arrivalNotes by remember {
         mutableStateOf(cleanDisplayNotes(visit.arrivalNotes).orEmpty())
     }
-    var departureNotes by remember { mutableStateOf(visit.departureNotes.orEmpty()) }
+    var departureNotes by remember {
+        mutableStateOf(cleanDisplayNotes(visit.departureNotes).orEmpty())
+    }
+    var exitVerifiedPlate by remember { mutableStateOf(initialInfo.exitVerifiedPlate.orEmpty()) }
     var cargoDescription by remember { mutableStateOf(visit.cargoDescription.orEmpty()) }
     var cargoItems by remember { mutableStateOf(visit.cargoItems) }
     var seals by remember { mutableStateOf(visit.seals) }
+    var customFields by remember { mutableStateOf(initialInfo.customFields) }
     var reason by remember { mutableStateOf("") }
+    var activeScannerTarget by remember { mutableStateOf<String?>(null) }
 
     val isCompleted = visit.status == VisitStatus.Completed
     val isPhoneValid = driverPhoneDigits.isEmpty() || driverPhoneDigits.length in 7..15
@@ -1093,22 +1186,58 @@ internal fun VisitCorrectionDialog(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        LiquidTextInput(
-                            value = countryCode,
-                            onValueChange = { countryCode = it.uppercase().take(4) },
-                            placeholder = "ZM",
-                            isMonospace = true,
-                            modifier = Modifier.weight(0.35f),
-                            dark = dark,
+                    SadcCountrySelectorField(
+                        countryCode = countryCode,
+                        onCountryCodeChange = { countryCode = it },
+                        customCountryReason = customCountryReason,
+                        onCustomCountryReasonChange = { customCountryReason = it },
+                        dark = dark,
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "Front Plate",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = scheme.onSurface,
+                            ),
                         )
-                        LiquidTextInput(
-                            value = frontPlate,
-                            onValueChange = { frontPlate = it.uppercase().take(20) },
-                            placeholder = "Front Plate",
-                            isMonospace = true,
-                            modifier = Modifier.weight(0.65f),
+                        SmallGlassChipButton(
+                            label = "Scan",
+                            icon = Icons.Default.CameraAlt,
                             dark = dark,
+                            onClick = { activeScannerTarget = "FRONT" },
+                        )
+                    }
+                    LiquidTextInput(
+                        value = frontPlate,
+                        onValueChange = { frontPlate = it.uppercase().take(20) },
+                        placeholder = "Front Plate",
+                        isMonospace = true,
+                        dark = dark,
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "Horse / Trailer Plate",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = scheme.onSurface,
+                            ),
+                        )
+                        SmallGlassChipButton(
+                            label = "Scan",
+                            icon = Icons.Default.CameraAlt,
+                            dark = dark,
+                            onClick = { activeScannerTarget = "HORSE" },
                         )
                     }
                     LiquidTextInput(
@@ -1118,12 +1247,45 @@ internal fun VisitCorrectionDialog(
                         isMonospace = true,
                         dark = dark,
                     )
+                    CategoryCustomFieldsEditor(
+                        category = VisitFieldCategory.Vehicle,
+                        customFields = customFields,
+                        onCustomFieldsChange = { customFields = it },
+                        dark = dark,
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "Transporter / Carrier",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = scheme.onSurface,
+                            ),
+                        )
+                        SmallGlassChipButton(
+                            label = "Scan",
+                            icon = Icons.Default.CameraAlt,
+                            dark = dark,
+                            onClick = { activeScannerTarget = "TRANSPORTER" },
+                        )
+                    }
                     LiquidTextInput(
                         value = transporter,
                         onValueChange = { transporter = it.take(60) },
                         placeholder = "Transporter / Carrier",
                         dark = dark,
                     )
+                    CategoryCustomFieldsEditor(
+                        category = VisitFieldCategory.Transporter,
+                        customFields = customFields,
+                        onCustomFieldsChange = { customFields = it },
+                        dark = dark,
+                    )
+
                     Row(
                         modifier = Modifier.horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1138,6 +1300,21 @@ internal fun VisitCorrectionDialog(
                             )
                         }
                     }
+                    if (visitType == VisitType.Other) {
+                        LiquidTextInput(
+                            value = customPurpose,
+                            onValueChange = { customPurpose = it.take(80) },
+                            placeholder = "Specify other visit purpose / reason...",
+                            dark = dark,
+                        )
+                    }
+                    CategoryCustomFieldsEditor(
+                        category = VisitFieldCategory.Purpose,
+                        customFields = customFields,
+                        onCustomFieldsChange = { customFields = it },
+                        dark = dark,
+                    )
+
                     LiquidTextInput(
                         value = driverName,
                         onValueChange = { driverName = it.take(80) },
@@ -1150,6 +1327,13 @@ internal fun VisitCorrectionDialog(
                         isValid = isPhoneValid,
                         dark = dark,
                     )
+                    CategoryCustomFieldsEditor(
+                        category = VisitFieldCategory.Driver,
+                        customFields = customFields,
+                        onCustomFieldsChange = { customFields = it },
+                        dark = dark,
+                    )
+
                     LiquidTextInput(
                         value = arrivalNotes,
                         onValueChange = { arrivalNotes = it.take(300) },
@@ -1157,12 +1341,51 @@ internal fun VisitCorrectionDialog(
                         maxLines = 3,
                         dark = dark,
                     )
+                    CategoryCustomFieldsEditor(
+                        category = VisitFieldCategory.Notes,
+                        customFields = customFields,
+                        onCustomFieldsChange = { customFields = it },
+                        dark = dark,
+                    )
+
                     if (isCompleted) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "Exit Verified Plate",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = scheme.onSurface,
+                                ),
+                            )
+                            SmallGlassChipButton(
+                                label = "Scan",
+                                icon = Icons.Default.CameraAlt,
+                                dark = dark,
+                                onClick = { activeScannerTarget = "EXIT" },
+                            )
+                        }
+                        LiquidTextInput(
+                            value = exitVerifiedPlate,
+                            onValueChange = { exitVerifiedPlate = it.uppercase().take(20) },
+                            placeholder = "Exit verified plate (optional)",
+                            isMonospace = true,
+                            dark = dark,
+                        )
                         LiquidTextInput(
                             value = departureNotes,
                             onValueChange = { departureNotes = it.take(300) },
                             placeholder = "Departure notes",
                             maxLines = 3,
+                            dark = dark,
+                        )
+                        CategoryCustomFieldsEditor(
+                            category = VisitFieldCategory.Departure,
+                            customFields = customFields,
+                            onCustomFieldsChange = { customFields = it },
                             dark = dark,
                         )
                     }
@@ -1173,6 +1396,8 @@ internal fun VisitCorrectionDialog(
                         onCargoItemsChange = { cargoItems = it },
                         seals = seals,
                         onSealsChange = { seals = it },
+                        customFields = customFields,
+                        onCustomFieldsChange = { customFields = it },
                         dark = dark,
                         initiallyExpanded = false,
                     )
@@ -1209,18 +1434,22 @@ internal fun VisitCorrectionDialog(
                             onSave(
                                 VisitCorrectionDraft(
                                     visitId = visit.id,
-                                    countryCode = countryCode.trim().uppercase(),
+                                    countryCode = countryCode.trim().uppercase().ifBlank { "ZM" },
+                                    customCountryReason = customCountryReason.trim().takeIf { it.isNotBlank() },
                                     frontPlate = normalizePlate(frontPlate),
                                     horsePlate = normalizePlate(horsePlate),
                                     transporter = transporter.trim().takeIf { it.isNotBlank() },
                                     visitType = visitType,
+                                    customPurpose = customPurpose.trim().takeIf { it.isNotBlank() && visitType == VisitType.Other },
                                     driverName = driverName.trim().takeIf { it.isNotBlank() },
                                     driverPhone = if (driverPhoneDigits.isNotEmpty()) "+$driverPhoneDigits" else null,
                                     arrivalNotes = arrivalNotes.trim().takeIf { it.isNotBlank() },
                                     departureNotes = departureNotes.trim().takeIf { it.isNotBlank() },
+                                    exitVerifiedPlate = exitVerifiedPlate.trim().takeIf { it.isNotBlank() },
                                     cargoDescription = cargoDescription.trim().takeIf { it.isNotBlank() },
                                     cargoItems = cargoItems,
                                     seals = seals,
+                                    customFields = customFields,
                                     reason = reason.trim().takeIf { it.isNotBlank() },
                                 ),
                             )
@@ -1257,6 +1486,30 @@ internal fun VisitCorrectionDialog(
                 }
             }
         }
+    }
+
+    activeScannerTarget?.let { target ->
+        val scanTitle = when (target) {
+            "FRONT" -> "Scan Front Plate"
+            "HORSE" -> "Scan Horse / Trailer Plate"
+            "EXIT" -> "Scan Exit Verification Plate"
+            else -> "Scan Transporter Marking"
+        }
+        val scanMode = if (target == "TRANSPORTER") OcrScanMode.TRANSPORTER else OcrScanMode.PLATE
+        PlateScannerDialog(
+            targetTitle = scanTitle,
+            scanMode = scanMode,
+            onDismiss = { activeScannerTarget = null },
+            onPlateScanned = { scannedValue ->
+                when (target) {
+                    "FRONT" -> frontPlate = scannedValue.uppercase().take(20)
+                    "HORSE" -> horsePlate = scannedValue.uppercase().take(20)
+                    "EXIT" -> exitVerifiedPlate = scannedValue.uppercase().take(20)
+                    "TRANSPORTER" -> transporter = scannedValue.take(60)
+                }
+                activeScannerTarget = null
+            },
+        )
     }
 }
 
@@ -1346,5 +1599,610 @@ private fun SelectableSmallChip(
             ),
             maxLines = 1,
         )
+    }
+}
+
+/**
+ * SADC Country selector with quick-pick SADC member country pills (defaulting to Zambia - ZM),
+ * direct manual code entry, and an "Other" reason/details input box when a non-SADC or "Other" option is chosen.
+ */
+@Composable
+internal fun SadcCountrySelectorField(
+    countryCode: String,
+    onCountryCodeChange: (String) -> Unit,
+    customCountryReason: String,
+    onCustomCountryReasonChange: (String) -> Unit,
+    dark: Boolean,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val extras = TruckParkExtras.colors
+    val cleanCode = countryCode.trim().uppercase()
+    val matchedSadc = SADC_COUNTRIES.firstOrNull { it.code == cleanCode }
+    var isOtherSelected by remember {
+        mutableStateOf(cleanCode.isNotEmpty() && matchedSadc == null)
+    }
+
+    val activeFlag = countryFlagForCode(cleanCode.ifBlank { "ZM" })
+    val activeName = matchedSadc?.name
+        ?: customCountryReason.trim().takeIf { it.isNotBlank() }
+        ?: if (cleanCode.isBlank()) "Select or enter country" else "Other ($cleanCode)"
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "SADC Region (tap country or type code)",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontSize = 10.sp,
+                    color = scheme.onSurfaceVariant,
+                ),
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                modifier = Modifier
+                    .clip(CapsuleShape)
+                    .background(scheme.primary.copy(alpha = if (dark) 0.18f else 0.10f))
+                    .border(BorderStroke(0.8.dp, scheme.primary.copy(alpha = 0.4f)), CapsuleShape)
+                    .padding(horizontal = 9.dp, vertical = 3.dp),
+            ) {
+                Text(
+                    text = activeFlag,
+                    fontSize = 13.sp,
+                )
+                Text(
+                    text = if (cleanCode.isNotBlank()) "$activeName ($cleanCode)" else activeName,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = scheme.primary,
+                    ),
+                )
+            }
+        }
+
+        Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            SADC_COUNTRIES.forEach { country ->
+                val isSelected = !isOtherSelected && cleanCode == country.code
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            if (isSelected) scheme.primary.copy(alpha = if (dark) 0.28f else 0.16f)
+                            else extras.glassFill
+                        )
+                        .border(
+                            BorderStroke(
+                                if (isSelected) 1.4.dp else 1.dp,
+                                if (isSelected) scheme.primary else extras.glassBorder,
+                            ),
+                            RoundedCornerShape(12.dp),
+                        )
+                        .clickable {
+                            isOtherSelected = false
+                            onCountryCodeChange(country.code)
+                        }
+                        .padding(horizontal = 11.dp, vertical = 7.dp),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            text = country.flag,
+                            fontSize = 16.sp,
+                        )
+                        Column {
+                            Text(
+                                text = country.name,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                                    color = if (isSelected) scheme.onSurface else scheme.onSurfaceVariant,
+                                ),
+                                maxLines = 1,
+                            )
+                            Text(
+                                text = country.code,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 9.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isSelected) scheme.primary else scheme.onSurfaceVariant.copy(alpha = 0.75f),
+                                ),
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                }
+            }
+
+            val otherActive = isOtherSelected || (cleanCode.isNotEmpty() && matchedSadc == null)
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(
+                        if (otherActive) scheme.primary.copy(alpha = if (dark) 0.28f else 0.16f)
+                        else extras.glassFill
+                    )
+                    .border(
+                        BorderStroke(
+                            if (otherActive) 1.4.dp else 1.dp,
+                            if (otherActive) scheme.primary else extras.glassBorder,
+                        ),
+                        RoundedCornerShape(12.dp),
+                    )
+                    .clickable {
+                        isOtherSelected = true
+                        if (matchedSadc != null) {
+                            onCountryCodeChange("")
+                        }
+                    }
+                    .padding(horizontal = 11.dp, vertical = 7.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = "\uD83C\uDF0D",
+                        fontSize = 16.sp,
+                    )
+                    Column {
+                        Text(
+                            text = "Other",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = 11.sp,
+                                fontWeight = if (otherActive) FontWeight.ExtraBold else FontWeight.SemiBold,
+                                color = if (otherActive) scheme.onSurface else scheme.onSurfaceVariant,
+                            ),
+                            maxLines = 1,
+                        )
+                        Text(
+                            text = "Custom",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (otherActive) scheme.primary else scheme.onSurfaceVariant.copy(alpha = 0.75f),
+                            ),
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+        }
+
+        LiquidTextInput(
+            value = countryCode,
+            onValueChange = {
+                val up = it.take(4).uppercase()
+                onCountryCodeChange(up)
+                isOtherSelected = up.isNotBlank() && SADC_COUNTRIES.none { c -> c.code == up.trim() }
+            },
+            placeholder = if (isOtherSelected) "Enter custom country code (e.g. KE, UG, BI)" else "ZM (Zambia)",
+            isMonospace = true,
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
+            dark = dark,
+        )
+
+        if (isOtherSelected || (cleanCode.isNotEmpty() && matchedSadc == null) || customCountryReason.isNotBlank()) {
+            LiquidTextInput(
+                value = customCountryReason,
+                onValueChange = { onCustomCountryReasonChange(it.take(100)) },
+                placeholder = "Other country name / reason (e.g. Kenya transit, special permit)",
+                dark = dark,
+            )
+        }
+    }
+}
+
+/**
+ * Allows users to add custom columns (field name + value) directly inside ANY category card,
+ * not just at the bottom of the screen.
+ */
+@Composable
+internal fun CategoryCustomFieldsEditor(
+    category: VisitFieldCategory,
+    customFields: List<CustomVisitField>,
+    onCustomFieldsChange: (List<CustomVisitField>) -> Unit,
+    dark: Boolean,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val extras = TruckParkExtras.colors
+    val categoryFields = customFields.filter { it.category == category }
+
+    var showAddForm by remember { mutableStateOf(false) }
+    var newColumnName by remember { mutableStateOf("") }
+    var newColumnValue by remember { mutableStateOf("") }
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = if (categoryFields.isEmpty()) {
+                    "Custom ${category.label} Fields"
+                } else {
+                    "Custom ${category.label} Fields (${categoryFields.size})"
+                },
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = scheme.onSurfaceVariant,
+                ),
+            )
+            SmallGlassChipButton(
+                label = if (showAddForm) "Close" else "+ Custom Column",
+                dark = dark,
+                onClick = { showAddForm = !showAddForm },
+            )
+        }
+
+        AnimatedVisibility(visible = showAddForm) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(scheme.surfaceVariant.copy(alpha = if (dark) 0.28f else 0.45f))
+                    .border(BorderStroke(1.dp, extras.glassBorder), RoundedCornerShape(12.dp))
+                    .padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                LiquidTextInput(
+                    value = newColumnName,
+                    onValueChange = { newColumnName = it.take(50) },
+                    placeholder = "Column / Field Name (e.g. Trailer 2, NRC No, Waybill)",
+                    dark = dark,
+                )
+                LiquidTextInput(
+                    value = newColumnValue,
+                    onValueChange = { newColumnValue = it.take(120) },
+                    placeholder = "Data / Value",
+                    dark = dark,
+                )
+                LiquidActionButton(
+                    text = "Add Custom Field",
+                    enabled = newColumnName.isNotBlank() && newColumnValue.isNotBlank(),
+                    dark = dark,
+                    onClick = {
+                        onCustomFieldsChange(
+                            customFields + CustomVisitField(
+                                id = UUID.randomUUID().toString(),
+                                category = category,
+                                columnName = newColumnName.trim(),
+                                value = newColumnValue.trim(),
+                            ),
+                        )
+                        newColumnName = ""
+                        newColumnValue = ""
+                        showAddForm = false
+                    },
+                )
+            }
+        }
+
+        categoryFields.forEach { field ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(scheme.surfaceVariant.copy(alpha = if (dark) 0.25f else 0.35f))
+                    .border(BorderStroke(0.8.dp, extras.glassBorder), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 10.dp, vertical = 7.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = field.columnName,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = scheme.primary,
+                        ),
+                    )
+                    Text(
+                        text = field.value,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            color = scheme.onSurface,
+                        ),
+                    )
+                }
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = "Remove custom field",
+                    tint = scheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .size(18.dp)
+                        .clickable {
+                            onCustomFieldsChange(customFields.filterNot { it.id == field.id })
+                        },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+internal fun CategoryCustomFieldsReadOnlyList(
+    category: VisitFieldCategory,
+    customFields: List<CustomVisitField>,
+    dark: Boolean,
+) {
+    val categoryFields = customFields.filter { it.category == category }
+    if (categoryFields.isEmpty()) return
+
+    val scheme = MaterialTheme.colorScheme
+    val extras = TruckParkExtras.colors
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        categoryFields.forEach { field ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(scheme.surfaceVariant.copy(alpha = if (dark) 0.25f else 0.4f))
+                    .border(BorderStroke(0.8.dp, extras.glassBorder), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = field.columnName,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = FontWeight.Bold,
+                        color = scheme.onSurfaceVariant,
+                    ),
+                )
+                Text(
+                    text = field.value,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontWeight = FontWeight.SemiBold,
+                        color = scheme.onSurface,
+                    ),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+internal fun DepartureSealVerificationCard(
+    seals: List<VisitSeal>,
+    onSealsChange: (List<VisitSeal>) -> Unit,
+    dark: Boolean,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val extras = TruckParkExtras.colors
+
+    var showAddExitSealForm by remember { mutableStateOf(false) }
+    var newSealNumber by remember { mutableStateOf("") }
+    var newSealType by remember { mutableStateOf("Bolt") }
+    var customSealTypeReason by remember { mutableStateOf("") }
+    var newSealCondition by remember { mutableStateOf(SealCondition.Intact) }
+    var newSealNotes by remember { mutableStateOf("") }
+
+    GlassCard(modifier = Modifier.fillMaxWidth(), contentPadding = 16) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Lock,
+                        contentDescription = null,
+                        tint = scheme.primary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Text(
+                        text = "EXIT SEAL & CARGO VERIFICATION (${seals.size})",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.ExtraBold,
+                            color = scheme.primary,
+                            letterSpacing = 0.8.sp,
+                        ),
+                    )
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (seals.any { it.condition != SealCondition.Intact }) {
+                        SmallGlassChipButton(
+                            label = "Mark All Intact",
+                            icon = Icons.Default.Check,
+                            dark = dark,
+                            onClick = {
+                                onSealsChange(seals.map { it.copy(condition = SealCondition.Intact) })
+                            },
+                        )
+                    }
+                    SmallGlassChipButton(
+                        label = if (showAddExitSealForm) "Close" else "+ Exit Seal",
+                        dark = dark,
+                        onClick = { showAddExitSealForm = !showAddExitSealForm },
+                    )
+                }
+            }
+
+            if (seals.isEmpty() && !showAddExitSealForm) {
+                Text(
+                    text = "No arrival seals recorded. Tap '+ Exit Seal' if the vehicle was sealed before departure.",
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontSize = 11.sp,
+                        color = scheme.onSurfaceVariant,
+                    ),
+                )
+            }
+
+            AnimatedVisibility(visible = showAddExitSealForm) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(scheme.surfaceVariant.copy(alpha = if (dark) 0.28f else 0.45f))
+                        .border(BorderStroke(1.dp, extras.glassBorder), RoundedCornerShape(12.dp))
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    LiquidTextInput(
+                        value = newSealNumber,
+                        onValueChange = { newSealNumber = it.uppercase().take(40) },
+                        placeholder = "Exit Seal Number (e.g., SL-90122)",
+                        isMonospace = true,
+                        leadingIcon = Icons.Default.Lock,
+                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
+                        dark = dark,
+                    )
+                    Row(
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        SEAL_TYPES.forEach { t ->
+                            SelectableSmallChip(
+                                label = t,
+                                selected = newSealType == t,
+                                accent = scheme.primary,
+                                dark = dark,
+                                onClick = { newSealType = t },
+                            )
+                        }
+                    }
+                    if (newSealType.equals("Other", ignoreCase = true)) {
+                        LiquidTextInput(
+                            value = customSealTypeReason,
+                            onValueChange = { customSealTypeReason = it.take(80) },
+                            placeholder = "Specify other exit seal type / reason...",
+                            dark = dark,
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        SealCondition.entries.forEach { cond ->
+                            val accent = if (cond == SealCondition.Intact) Color(0xFF10B981) else Color(0xFFEF4444)
+                            SelectableSmallChip(
+                                label = cond.label,
+                                selected = newSealCondition == cond,
+                                accent = accent,
+                                dark = dark,
+                                onClick = { newSealCondition = cond },
+                            )
+                        }
+                    }
+                    LiquidTextInput(
+                        value = newSealNotes,
+                        onValueChange = { newSealNotes = it.take(150) },
+                        placeholder = "Exit seal notes (optional)",
+                        dark = dark,
+                    )
+                    LiquidActionButton(
+                        text = "Add Exit Seal",
+                        enabled = newSealNumber.isNotBlank(),
+                        dark = dark,
+                        onClick = {
+                            val resolvedType = if (newSealType.equals("Other", ignoreCase = true) && customSealTypeReason.isNotBlank()) {
+                                "Other (${customSealTypeReason.trim()})"
+                            } else {
+                                newSealType
+                            }
+                            onSealsChange(
+                                seals + VisitSeal(
+                                    id = UUID.randomUUID().toString(),
+                                    sealNumber = newSealNumber.trim(),
+                                    sealType = resolvedType,
+                                    condition = newSealCondition,
+                                    notes = newSealNotes.trim().takeIf { it.isNotBlank() } ?: "Added at departure",
+                                ),
+                            )
+                            newSealNumber = ""
+                            customSealTypeReason = ""
+                            newSealNotes = ""
+                            newSealCondition = SealCondition.Intact
+                            showAddExitSealForm = false
+                        },
+                    )
+                }
+            }
+
+            seals.forEach { seal ->
+                val condColor = if (seal.condition == SealCondition.Intact) Color(0xFF10B981) else Color(0xFFEF4444)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(scheme.surfaceVariant.copy(alpha = if (dark) 0.25f else 0.35f))
+                        .border(
+                            BorderStroke(
+                                0.8.dp,
+                                if (seal.condition == SealCondition.Intact) extras.glassBorder else condColor.copy(alpha = 0.5f),
+                            ),
+                            RoundedCornerShape(10.dp),
+                        )
+                        .padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "${seal.sealNumber} (${seal.sealType})",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    color = scheme.onSurface,
+                                ),
+                            )
+                            seal.notes?.takeIf { it.isNotBlank() }?.let { note ->
+                                Text(
+                                    text = note,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontSize = 10.sp,
+                                        color = scheme.onSurfaceVariant,
+                                    ),
+                                )
+                            }
+                        }
+                        SealPhotoThumbnail(path = seal.localPhotoPath)
+                    }
+                    Row(
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        SealCondition.entries.forEach { cond ->
+                            val chipAccent = if (cond == SealCondition.Intact) Color(0xFF10B981) else Color(0xFFEF4444)
+                            SelectableSmallChip(
+                                label = cond.label,
+                                selected = seal.condition == cond,
+                                accent = chipAccent,
+                                dark = dark,
+                                onClick = {
+                                    onSealsChange(
+                                        seals.map { existing ->
+                                            if (existing.id == seal.id) existing.copy(condition = cond) else existing
+                                        },
+                                    )
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }

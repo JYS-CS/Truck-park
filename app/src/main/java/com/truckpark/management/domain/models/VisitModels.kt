@@ -69,20 +69,87 @@ data class VisitCorrectionRecord(
     val wasCritical: Boolean,
 )
 
+data class SadcCountry(
+    val code: String,
+    val name: String,
+    val flag: String,
+)
+
+val SADC_COUNTRIES: List<SadcCountry> = listOf(
+    SadcCountry("ZM", "Zambia", "\uD83C\uDDFF\uD83C\uDDF2"),
+    SadcCountry("ZA", "South Africa", "\uD83C\uDDFF\uD83C\uDDE6"),
+    SadcCountry("ZW", "Zimbabwe", "\uD83C\uDDFF\uD83C\uDDFC"),
+    SadcCountry("CD", "DR Congo", "\uD83C\uDDE8\uD83C\uDDE9"),
+    SadcCountry("TZ", "Tanzania", "\uD83C\uDDF9\uD83C\uDDFF"),
+    SadcCountry("MW", "Malawi", "\uD83C\uDDF2\uD83C\uDDFC"),
+    SadcCountry("BW", "Botswana", "\uD83C\uDDE7\uD83C\uDDFC"),
+    SadcCountry("MZ", "Mozambique", "\uD83C\uDDF2\uD83C\uDDFF"),
+    SadcCountry("NA", "Namibia", "\uD83C\uDDF3\uD83C\uDDE6"),
+    SadcCountry("AO", "Angola", "\uD83C\uDDE6\uD83C\uDDF4"),
+    SadcCountry("LS", "Lesotho", "\uD83C\uDDF1\uD83C\uDDF8"),
+    SadcCountry("SZ", "Eswatini", "\uD83C\uDDF8\uD83C\uDDFF"),
+    SadcCountry("MG", "Madagascar", "\uD83C\uDDF2\uD83C\uDDEC"),
+    SadcCountry("MU", "Mauritius", "\uD83C\uDDF2\uD83C\uDDFA"),
+    SadcCountry("SC", "Seychelles", "\uD83C\uDDF8\uD83C\uDDE8"),
+    SadcCountry("KM", "Comoros", "\uD83C\uDDF0\uD83C\uDDF2"),
+)
+
+fun countryFlagForCode(code: String): String {
+    val clean = code.trim().uppercase()
+    SADC_COUNTRIES.firstOrNull { it.code == clean }?.let { return it.flag }
+    if (clean.length == 2 && clean.all { it in 'A'..'Z' }) {
+        val first = Character.toChars(0x1F1E6 + (clean[0] - 'A'))
+        val second = Character.toChars(0x1F1E6 + (clean[1] - 'A'))
+        return String(first) + String(second)
+    }
+    return "\uD83C\uDF0D"
+}
+
+fun countryNameForCode(code: String): String? {
+    val clean = code.trim().uppercase()
+    return SADC_COUNTRIES.firstOrNull { it.code == clean }?.name
+}
+
+enum class VisitFieldCategory(val code: String, val label: String) {
+    Vehicle("VEHICLE", "Vehicle Identification"),
+    Transporter("TRANSPORTER", "Transporter / Carrier"),
+    Purpose("PURPOSE", "Visit Purpose"),
+    Driver("DRIVER", "Driver & Contact"),
+    Cargo("CARGO", "Cargo & Seals"),
+    Notes("NOTES", "Inspection & Notes"),
+    Departure("DEPARTURE", "Gate Departure");
+
+    companion object {
+        fun fromCode(code: String?): VisitFieldCategory =
+            entries.firstOrNull { it.code.equals(code?.trim(), ignoreCase = true) } ?: Notes
+    }
+}
+
+data class CustomVisitField(
+    val id: String,
+    val category: VisitFieldCategory,
+    val columnName: String,
+    val value: String,
+)
+
 data class VisitCorrectionDraft(
     val visitId: String,
     val countryCode: String,
+    val customCountryReason: String? = null,
     val frontPlate: String,
     val horsePlate: String,
     val transporter: String?,
     val visitType: VisitType,
+    val customPurpose: String? = null,
     val driverName: String?,
     val driverPhone: String?,
     val arrivalNotes: String?,
     val departureNotes: String?,
+    val exitVerifiedPlate: String? = null,
     val cargoDescription: String?,
     val cargoItems: List<CargoItem>,
     val seals: List<VisitSeal>,
+    val customFields: List<CustomVisitField> = emptyList(),
     val reason: String?,
 )
 
@@ -162,7 +229,23 @@ data class PlateInfo(
     val horsePlate: String,
     val transporter: String? = null,
     val customPurpose: String? = null,
+    val customCountryReason: String? = null,
+    val exitVerifiedPlate: String? = null,
+    val customFields: List<CustomVisitField> = emptyList(),
 )
+
+fun sanitizeTagPart(raw: String): String =
+    raw.replace("[", "(").replace("]", ")").replace("|", "/").trim()
+
+fun encodeCustomFieldsTags(fields: List<CustomVisitField>): String {
+    if (fields.isEmpty()) return ""
+    return fields.mapNotNull { field ->
+        val col = sanitizeTagPart(field.columnName)
+        val v = sanitizeTagPart(field.value)
+        if (col.isEmpty() || v.isEmpty()) null
+        else "[Custom:${field.category.code}|$col|$v]"
+    }.joinToString(" ")
+}
 
 fun encodeCargoItemsJson(items: List<CargoItem>): String? {
     if (items.isEmpty()) return null
@@ -250,10 +333,22 @@ fun decodeSealsJson(raw: String?): List<VisitSeal> {
     }
 }
 
-fun extractPlateInfo(plateNumber: String, arrivalNotes: String?): PlateInfo {
+fun extractPlateInfo(
+    plateNumber: String,
+    arrivalNotes: String?,
+    departureNotes: String? = null,
+): PlateInfo {
     val notes = arrivalNotes ?: ""
+    val combinedNotes = buildString {
+        append(notes)
+        if (!departureNotes.isNullOrBlank()) {
+            append(" ")
+            append(departureNotes)
+        }
+    }
     val countryMatch = Regex("""\[Country:\s*([A-Za-z0-9]+)\]""").find(notes)
         ?: Regex("""Country:\s*([A-Za-z0-9]+)""").find(notes)
+    val countryReasonMatch = Regex("""\[CountryReason:\s*([^\]]+)\]""").find(notes)
     val horseMatch = Regex("""\[Horse:\s*([^\]]+)\]""").find(notes)
         ?: Regex("""Horse(?:\s*Plate)?:\s*([^\n|]+)""").find(notes)
     val frontMatch = Regex("""\[Front:\s*([^\]]+)\]""").find(notes)
@@ -261,24 +356,73 @@ fun extractPlateInfo(plateNumber: String, arrivalNotes: String?): PlateInfo {
     val transporterMatch = Regex("""\[Transporter:\s*([^\]]+)\]""").find(notes)
         ?: Regex("""Transporter:\s*([^\n|]+)""").find(notes)
     val purposeMatch = Regex("""\[Purpose:\s*([^\]]+)\]""").find(notes)
+    val exitPlateMatch = Regex("""\[ExitPlate:\s*([^\]]+)\]""").find(combinedNotes)
+
+    val customMatches = Regex("""\[Custom:([^\]]+)\]""").findAll(combinedNotes)
+    val customFields = customMatches.mapIndexedNotNull { index, match ->
+        val rawContent = match.groupValues[1]
+        val parts = rawContent.split("|")
+        when {
+            parts.size >= 3 -> {
+                val category = VisitFieldCategory.fromCode(parts[0])
+                val col = parts[1].trim()
+                val v = parts.subList(2, parts.size).joinToString("|").trim()
+                if (col.isNotEmpty() && v.isNotEmpty()) {
+                    CustomVisitField(
+                        id = "custom_${index}_${col.hashCode()}",
+                        category = category,
+                        columnName = col,
+                        value = v,
+                    )
+                } else null
+            }
+            parts.size == 2 -> {
+                val col = parts[0].trim()
+                val v = parts[1].trim()
+                if (col.isNotEmpty() && v.isNotEmpty()) {
+                    CustomVisitField(
+                        id = "custom_${index}_${col.hashCode()}",
+                        category = VisitFieldCategory.Notes,
+                        columnName = col,
+                        value = v,
+                    )
+                } else null
+            }
+            else -> null
+        }
+    }.distinctBy { "${it.category.code}|${it.columnName.lowercase()}|${it.value}" }.toList()
 
     val country = countryMatch?.groupValues?.get(1)?.trim()?.uppercase() ?: "ZM"
+    val countryReason = countryReasonMatch?.groupValues?.get(1)?.trim()
     val front = frontMatch?.groupValues?.get(1)?.trim() ?: plateNumber
     val horse = horseMatch?.groupValues?.get(1)?.trim() ?: plateNumber
     val transporter = transporterMatch?.groupValues?.get(1)?.trim()
     val purpose = purposeMatch?.groupValues?.get(1)?.trim()
+    val exitVerifiedPlate = exitPlateMatch?.groupValues?.get(1)?.trim()
 
-    return PlateInfo(country = country, frontPlate = front, horsePlate = horse, transporter = transporter, customPurpose = purpose)
+    return PlateInfo(
+        country = country,
+        frontPlate = front,
+        horsePlate = horse,
+        transporter = transporter,
+        customPurpose = purpose,
+        customCountryReason = countryReason,
+        exitVerifiedPlate = exitVerifiedPlate,
+        customFields = customFields,
+    )
 }
 
 fun cleanDisplayNotes(rawNotes: String?): String? {
     if (rawNotes.isNullOrBlank()) return null
     val stripped = rawNotes
         .replace(Regex("""\[Country:\s*[^\]]+\]\s*"""), "")
+        .replace(Regex("""\[CountryReason:\s*[^\]]+\]\s*"""), "")
         .replace(Regex("""\[Horse:\s*[^\]]+\]\s*"""), "")
         .replace(Regex("""\[Front:\s*[^\]]+\]\s*"""), "")
         .replace(Regex("""\[Transporter:\s*[^\]]+\]\s*"""), "")
         .replace(Regex("""\[Purpose:\s*[^\]]+\]\s*"""), "")
+        .replace(Regex("""\[ExitPlate:\s*[^\]]+\]\s*"""), "")
+        .replace(Regex("""\[Custom:[^\]]+\]\s*"""), "")
         .replace(Regex("""Country:\s*[A-Za-z0-9]+\s*\|?\s*"""), "")
         .replace(Regex("""Horse(?:\s*Plate)?:\s*[^\n|]+\s*\|?\s*"""), "")
         .replace(Regex("""Front(?:\s*Plate)?:\s*[^\n|]+\s*\|?\s*"""), "")

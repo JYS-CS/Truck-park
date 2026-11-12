@@ -17,6 +17,7 @@ import com.truckpark.management.domain.models.SyncState
 import com.truckpark.management.domain.models.TruckVisit
 import com.truckpark.management.domain.models.VisitCorrectionDraft
 import com.truckpark.management.domain.models.VisitCorrectionRecord
+import com.truckpark.management.domain.models.VisitSeal
 import com.truckpark.management.domain.models.VisitType
 import com.truckpark.management.domain.models.cleanDisplayNotes
 import com.truckpark.management.domain.models.extractPlateInfo
@@ -291,11 +292,15 @@ class VisitsViewModel(
         }
     }
 
-    fun recordDeparture(visitId: String, notes: String?) {
+    fun recordDeparture(
+        visitId: String,
+        notes: String?,
+        updatedSeals: List<VisitSeal>? = null,
+    ) {
         if (_isSubmittingDeparture.value) return
         viewModelScope.launch {
             _isSubmittingDeparture.value = true
-            val result = repository.recordDeparture(visitId, notes)
+            val result = repository.recordDeparture(visitId, notes, updatedSeals)
             _isSubmittingDeparture.value = false
             _departureOutcome.value = result
             if (result is AuthResult.Success) {
@@ -520,14 +525,21 @@ class VisitsViewModel(
     }
 
     private fun matchesSearch(visit: TruckVisit, cleanQuery: String): Boolean {
-        val info = extractPlateInfo(visit.plateNumber, visit.arrivalNotes)
+        val info = extractPlateInfo(visit.plateNumber, visit.arrivalNotes, visit.departureNotes)
         val notes = cleanDisplayNotes(visit.arrivalNotes)?.uppercase().orEmpty()
+        val depNotes = cleanDisplayNotes(visit.departureNotes)?.uppercase().orEmpty()
         return visit.plateNumber.uppercase().contains(cleanQuery) ||
             info.frontPlate.uppercase().contains(cleanQuery) ||
             info.horsePlate.uppercase().contains(cleanQuery) ||
             info.country.uppercase().contains(cleanQuery) ||
+            (info.customCountryReason?.uppercase()?.contains(cleanQuery) == true) ||
             (info.transporter?.uppercase()?.contains(cleanQuery) == true) ||
             (info.customPurpose?.uppercase()?.contains(cleanQuery) == true) ||
+            (info.exitVerifiedPlate?.uppercase()?.contains(cleanQuery) == true) ||
+            info.customFields.any {
+                it.columnName.uppercase().contains(cleanQuery) ||
+                    it.value.uppercase().contains(cleanQuery)
+            } ||
             (visit.reference?.uppercase()?.contains(cleanQuery) == true) ||
             (visit.driverName?.uppercase()?.contains(cleanQuery) == true) ||
             (visit.driverPhone?.uppercase()?.contains(cleanQuery) == true) ||
@@ -540,7 +552,8 @@ class VisitsViewModel(
                 it.sealNumber.uppercase().contains(cleanQuery) ||
                     it.sealType.uppercase().contains(cleanQuery)
             } ||
-            notes.contains(cleanQuery)
+            notes.contains(cleanQuery) ||
+            depNotes.contains(cleanQuery)
     }
 
     companion object {

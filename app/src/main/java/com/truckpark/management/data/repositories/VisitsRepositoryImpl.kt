@@ -30,9 +30,11 @@ import com.truckpark.management.domain.models.cleanDisplayNotes
 import com.truckpark.management.domain.models.decodeCargoItemsJson
 import com.truckpark.management.domain.models.decodeSealsJson
 import com.truckpark.management.domain.models.encodeCargoItemsJson
+import com.truckpark.management.domain.models.encodeCustomFieldsTags
 import com.truckpark.management.domain.models.encodeSealsJson
 import com.truckpark.management.domain.models.extractPlateInfo
 import com.truckpark.management.domain.models.normalizePlate
+import com.truckpark.management.domain.models.sanitizeTagPart
 import com.truckpark.management.domain.repositories.AuthRepository
 import com.truckpark.management.domain.repositories.VisitsRepository
 import java.time.Duration
@@ -261,7 +263,11 @@ class VisitsRepositoryImpl(
         }
     }
 
-    override suspend fun recordDeparture(visitId: String, notes: String?): AuthResult<TruckVisit> {
+    override suspend fun recordDeparture(
+        visitId: String,
+        notes: String?,
+        updatedSeals: List<VisitSeal>?,
+    ): AuthResult<TruckVisit> {
         val now = clock().toEpochMilli()
         val current = visits.getById(visitId)
             ?: return failure(NOT_FOUND, "That visit could not be found.")
@@ -269,6 +275,7 @@ class VisitsRepositoryImpl(
             return failure(ALREADY_COMPLETED, "This visit has already been completed.")
         }
         val cleanNotes = notes.cleaned()
+        val updatedSealsJson = if (updatedSeals != null) encodeSealsJson(updatedSeals) else current.sealsJson
         val departedInstant = Instant.ofEpochMilli(now)
 
         val cloudResult = auth.authorised { token ->
@@ -282,6 +289,7 @@ class VisitsRepositoryImpl(
                     status = STATUS_COMPLETED,
                     departedAt = now,
                     departureNotes = cleanNotes,
+                    sealsJson = updatedSealsJson,
                     syncState = SyncStateCodes.SYNCED,
                     syncError = null,
                     updatedAt = now,
@@ -305,6 +313,7 @@ class VisitsRepositoryImpl(
                     status = STATUS_COMPLETED,
                     departedAt = now,
                     departureNotes = cleanNotes,
+                    sealsJson = updatedSealsJson,
                     syncState = SyncStateCodes.PENDING,
                     syncError = error.message,
                     updatedAt = now,
@@ -345,30 +354,51 @@ class VisitsRepositoryImpl(
         }
 
         val cleanTransporter = draft.transporter.cleaned()
-        val oldInfo = extractPlateInfo(current.plateNumber, current.arrivalNotes)
-        val customPurpose = oldInfo.customPurpose?.takeIf { draft.visitType == VisitType.Other }
+        val oldInfo = extractPlateInfo(current.plateNumber, current.arrivalNotes, current.departureNotes)
+        val customPurpose = (draft.customPurpose.cleaned() ?: oldInfo.customPurpose)
+            ?.takeIf { draft.visitType == VisitType.Other }
+        val customCountryReason = draft.customCountryReason.cleaned()
+        val exitVerifiedPlate = (draft.exitVerifiedPlate.cleaned() ?: oldInfo.exitVerifiedPlate)
+            ?.let { normalizePlate(it) }
+            ?.takeIf { it.isNotBlank() }
+        val customFieldsTags = encodeCustomFieldsTags(draft.customFields)
         val cleanUserNotes = draft.arrivalNotes.cleaned().orEmpty()
         val rebuiltNotes = buildString {
             append("[Country: $cleanCountry] [Front: $cleanFront] [Horse: $cleanHorse]")
-            if (cleanTransporter != null) append(" [Transporter: $cleanTransporter]")
-            if (customPurpose != null) append(" [Purpose: $customPurpose]")
+            if (customCountryReason != null) append(" [CountryReason: ${sanitizeTagPart(customCountryReason)}]")
+            if (cleanTransporter != null) append(" [Transporter: ${sanitizeTagPart(cleanTransporter)}]")
+            if (customPurpose != null) append(" [Purpose: ${sanitizeTagPart(customPurpose)}]")
+            if (exitVerifiedPlate != null) append(" [ExitPlate: ${sanitizeTagPart(exitVerifiedPlate)}]")
+            if (customFieldsTags.isNotBlank()) append(" $customFieldsTags")
             if (cleanUserNotes.isNotBlank()) append(" $cleanUserNotes")
         }.trim().takeIf { it.isNotBlank() }
 
-        val cleanDepNotes = if (isCompleted) draft.departureNotes.cleaned() else current.departureNotes
+        val cleanDepNotes = if (isCompleted) {
+            val rawDep = cleanDisplayNotes(draft.departureNotes).orEmpty()
+            buildString {
+                if (exitVerifiedPlate != null) append("[ExitPlate: ${sanitizeTagPart(exitVerifiedPlate)}] ")
+                append(rawDep)
+            }.trim().takeIf { it.isNotBlank() }
+        } else {
+            current.departureNotes
+        }
         val cleanCargoDesc = draft.cargoDescription.cleaned()
         val encodedCargo = encodeCargoItemsJson(draft.cargoItems)
         val encodedSeals = encodeSealsJson(draft.seals)
         val summary = buildCorrectionSummary(
             old = current,
             oldInfo = oldInfo,
+            newCountry = cleanCountry,
+            newCountryReason = customCountryReason,
             newFront = cleanFront,
             newHorse = cleanHorse,
             newTransporter = cleanTransporter,
             newType = draft.visitType,
+            newCustomPurpose = customPurpose,
             newDriver = draft.driverName.cleaned(),
             newCargoDesc = cleanCargoDesc,
-            newSealsCount = draft.seals.size,
+            newSeals = draft.seals,
+            newCustomFields = draft.customFields,
         )
 
         val now = clock().toEpochMilli()
@@ -747,23 +777,51 @@ class VisitsRepositoryImpl(
     private fun buildCorrectionSummary(
         old: TruckVisitEntity,
         oldInfo: com.truckpark.management.domain.models.PlateInfo,
+        newCountry: String,
+        newCountryReason: String?,
         newFront: String,
         newHorse: String,
         newTransporter: String?,
         newType: VisitType,
+        newCustomPurpose: String?,
         newDriver: String?,
         newCargoDesc: String?,
-        newSealsCount: Int,
+        newSeals: List<VisitSeal>,
+        newCustomFields: List<com.truckpark.management.domain.models.CustomVisitField>,
     ): String {
         val parts = mutableListOf<String>()
+        if (oldInfo.country != newCountry) parts += "Country: ${oldInfo.country} -> $newCountry"
+        if (oldInfo.customCountryReason != newCountryReason) {
+            parts += "Country detail: ${oldInfo.customCountryReason ?: "None"} -> ${newCountryReason ?: "None"}"
+        }
         if (oldInfo.frontPlate != newFront) parts += "Front plate: ${oldInfo.frontPlate} -> $newFront"
         if (oldInfo.horsePlate != newHorse) parts += "Horse plate: ${oldInfo.horsePlate} -> $newHorse"
         if (oldInfo.transporter != newTransporter) parts += "Transporter updated"
         if (old.visitType != newType.code) parts += "Type: ${old.visitType} -> ${newType.code}"
+        if (oldInfo.customPurpose != newCustomPurpose) {
+            parts += "Purpose: ${oldInfo.customPurpose ?: "Standard"} -> ${newCustomPurpose ?: "Standard"}"
+        }
         if (old.driverName != newDriver) parts += "Driver updated"
         if (old.cargoDescription != newCargoDesc) parts += "Cargo updated"
-        val oldSealsCount = decodeSealsJson(old.sealsJson).size
-        if (oldSealsCount != newSealsCount) parts += "Seals: $oldSealsCount -> $newSealsCount"
+        val oldSeals = decodeSealsJson(old.sealsJson)
+        if (oldSeals.size != newSeals.size) {
+            parts += "Seals: ${oldSeals.size} -> ${newSeals.size}"
+        } else if (oldSeals != newSeals) {
+            parts += "Seal details/conditions updated"
+        }
+        val oldCustomMap = oldInfo.customFields.associate { "${it.category.code}:${it.columnName}" to it.value }
+        val newCustomMap = newCustomFields.associate { "${it.category.code}:${it.columnName}" to it.value }
+        if (oldCustomMap != newCustomMap) {
+            val changedColumns = (oldCustomMap.keys + newCustomMap.keys)
+                .filter { oldCustomMap[it] != newCustomMap[it] }
+                .map { it.substringAfter(":") }
+                .distinct()
+            if (changedColumns.isNotEmpty()) {
+                parts += "Custom columns (${changedColumns.joinToString(", ")})"
+            } else {
+                parts += "Custom columns updated"
+            }
+        }
         return if (parts.isEmpty()) "Updated visit notes or details" else parts.joinToString(" • ")
     }
 
@@ -851,14 +909,27 @@ private fun mergeSealPhotoPaths(
 
 private fun RemoteVisit.toEntity(existing: TruckVisitEntity?): TruckVisitEntity {
     val enhancedNotes = if (countryCode != null || frontPlate != null || horsePlate != null || transporter != null) {
-        val existingInfo = extractPlateInfo(plateNumber, arrivalNotes)
-        val cc = countryCode ?: existingInfo.country
-        val fp = frontPlate ?: existingInfo.frontPlate
-        val hp = horsePlate ?: existingInfo.horsePlate
-        val tr = transporter ?: existingInfo.transporter
-        val trTag = if (!tr.isNullOrBlank()) "[Transporter: $tr] " else ""
+        val remoteInfo = extractPlateInfo(plateNumber, arrivalNotes, departureNotes)
+        val localInfo = existing?.let { extractPlateInfo(it.plateNumber, it.arrivalNotes, it.departureNotes) }
+        val cc = countryCode ?: remoteInfo.country.ifBlank { localInfo?.country ?: "ZM" }
+        val fp = frontPlate ?: remoteInfo.frontPlate.ifBlank { localInfo?.frontPlate ?: plateNumber }
+        val hp = horsePlate ?: remoteInfo.horsePlate.ifBlank { localInfo?.horsePlate ?: plateNumber }
+        val tr = transporter ?: remoteInfo.transporter ?: localInfo?.transporter
+        val cr = remoteInfo.customCountryReason ?: localInfo?.customCountryReason
+        val cp = remoteInfo.customPurpose ?: localInfo?.customPurpose
+        val ep = remoteInfo.exitVerifiedPlate ?: localInfo?.exitVerifiedPlate
+        val cf = if (remoteInfo.customFields.isNotEmpty()) remoteInfo.customFields else localInfo?.customFields.orEmpty()
+        val cfTags = com.truckpark.management.domain.models.encodeCustomFieldsTags(cf)
         val cleanNotes = cleanDisplayNotes(arrivalNotes) ?: ""
-        "[Country: $cc] [Front: $fp] [Horse: $hp] $trTag$cleanNotes".trim().ifBlank { null }
+        buildString {
+            append("[Country: $cc] [Front: $fp] [Horse: $hp]")
+            if (!cr.isNullOrBlank()) append(" [CountryReason: ${com.truckpark.management.domain.models.sanitizeTagPart(cr)}]")
+            if (!tr.isNullOrBlank()) append(" [Transporter: ${com.truckpark.management.domain.models.sanitizeTagPart(tr)}]")
+            if (!cp.isNullOrBlank()) append(" [Purpose: ${com.truckpark.management.domain.models.sanitizeTagPart(cp)}]")
+            if (!ep.isNullOrBlank()) append(" [ExitPlate: ${com.truckpark.management.domain.models.sanitizeTagPart(ep)}]")
+            if (cfTags.isNotBlank()) append(" $cfTags")
+            if (cleanNotes.isNotBlank()) append(" $cleanNotes")
+        }.trim().ifBlank { null }
     } else {
         arrivalNotes
     }

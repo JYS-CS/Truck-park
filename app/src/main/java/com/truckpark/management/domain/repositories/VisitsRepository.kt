@@ -8,6 +8,7 @@ import com.truckpark.management.domain.models.SyncReport
 import com.truckpark.management.domain.models.TruckVisit
 import com.truckpark.management.domain.models.VisitCorrectionDraft
 import com.truckpark.management.domain.models.VisitCorrectionRecord
+import com.truckpark.management.domain.models.VisitSeal
 import java.time.Instant
 import kotlinx.coroutines.flow.Flow
 
@@ -40,7 +41,11 @@ interface VisitsRepository {
 
     suspend fun recordArrival(draft: ArrivalDraft, allowDuplicate: Boolean = false): ArrivalOutcome
 
-    suspend fun recordDeparture(visitId: String, notes: String?): AuthResult<TruckVisit>
+    suspend fun recordDeparture(
+        visitId: String,
+        notes: String?,
+        updatedSeals: List<VisitSeal>? = null,
+    ): AuthResult<TruckVisit>
 
     suspend fun recordCorrection(
         draft: VisitCorrectionDraft,

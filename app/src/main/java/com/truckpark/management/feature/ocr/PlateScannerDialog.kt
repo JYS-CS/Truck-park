@@ -319,7 +319,11 @@ fun PlateScannerDialog(
                                     )
                                 )
                                 Text(
-                                    text = "Tap to place the box on the plate",
+                                    text = if (scanMode == OcrScanMode.TRANSPORTER) {
+                                        "Tap to place the box on the transporter info"
+                                    } else {
+                                        "Tap to place the box on the plate"
+                                    },
                                     style = MaterialTheme.typography.bodySmall.copy(
                                         fontSize = 11.sp,
                                         color = Color.White.copy(alpha = 0.7f)
@@ -393,7 +397,8 @@ fun PlateScannerDialog(
                                     fontWeight = FontWeight.ExtraBold,
                                     fontFamily = FontFamily.Monospace,
                                     color = Color.White,
-                                    letterSpacing = 2.sp
+                                    letterSpacing = 2.sp,
+                                    textAlign = TextAlign.Center,
                                 )
                             )
                             detectedPlateResult?.matchedCarrier?.let { carrier ->
