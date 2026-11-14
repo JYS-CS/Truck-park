@@ -174,6 +174,7 @@ class OrdsAuthRemoteDataSource(
         code: String?,
         fullName: String?,
         phone: String?,
+        currentPassword: String?,
     ): AuthResult<Unit> = call(
         path = "auth/change-password",
         body = JSONObject()
@@ -183,6 +184,7 @@ class OrdsAuthRemoteDataSource(
                 if (!code.isNullOrBlank()) put("code", code.trim())
                 if (!fullName.isNullOrBlank()) put("full_name", fullName.trim())
                 if (!phone.isNullOrBlank()) put("phone", phone.trim())
+                if (!currentPassword.isNullOrBlank()) put("current_password", currentPassword)
             },
         bearer = sessionToken,
     ) { }
@@ -234,6 +236,12 @@ class OrdsAuthRemoteDataSource(
                     phone = obj.optString("phone", ""),
                     status = obj.optString("status", "APPROVED"),
                     role = obj.optString("role", "RUNNER").ifBlank { "RUNNER" },
+                    emailVerified = obj.optBoolean("email_verified", true),
+                    createdAt = obj.optString("created_at", "").takeIf { it.isNotBlank() },
+                    failedAttempts = obj.optInt("failed_attempts", 0),
+                    lockedUntil = obj.optString("locked_until", "").takeIf { it.isNotBlank() },
+                    isLocked = obj.optBoolean("is_locked", false),
+                    deactivateAt = obj.optString("deactivate_at", "").takeIf { it.isNotBlank() },
                 )
             }
         }
@@ -246,6 +254,15 @@ class OrdsAuthRemoteDataSource(
     ): AuthResult<Unit> = call(
         path = "admin/users/${userId.trim()}/approve",
         body = JSONObject().put("role_code", roleCode.trim().uppercase()),
+        bearer = sessionToken,
+    ) { }
+
+    override suspend fun deactivateUser(
+        sessionToken: String,
+        userId: String,
+    ): AuthResult<Unit> = call(
+        path = "admin/users/${userId.trim()}/deactivate",
+        body = JSONObject(),
         bearer = sessionToken,
     ) { }
 

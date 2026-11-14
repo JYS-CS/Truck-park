@@ -46,6 +46,12 @@ data class ManagedUser(
     val phone: String = "",
     val status: String,
     val role: String,
+    val emailVerified: Boolean = true,
+    val createdAt: String? = null,
+    val failedAttempts: Int = 0,
+    val lockedUntil: String? = null,
+    val isLocked: Boolean = false,
+    val deactivateAt: String? = null,
 )
 
 /** Granular permission override for an individual staff member. */

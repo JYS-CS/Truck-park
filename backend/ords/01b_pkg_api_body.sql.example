@@ -1327,6 +1327,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     p_code IN VARCHAR2 DEFAULT NULL,
     p_full_name IN VARCHAR2 DEFAULT NULL,
     p_phone IN VARCHAR2 DEFAULT NULL,
+    p_current_password IN VARCHAR2 DEFAULT NULL,
     p_status OUT NUMBER, p_body OUT CLOB
   ) IS
     v_user_id       VARCHAR2(36);
@@ -1334,6 +1335,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     v_salt          RAW(16);
     v_iters         NUMBER;
     v_calc_hash     VARCHAR2(255);
+    v_curr_calc     VARCHAR2(255);
     v_new_salt      RAW(16);
     v_new_hash      VARCHAR2(255);
     v_current_email VARCHAR2(320);
@@ -1378,12 +1380,19 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     END IF;
 
     IF v_has_new_pwd THEN
+      -- When changing password from profile (not initial forced setup), verify current password if provided
+      IF v_must = 'N' AND p_current_password IS NOT NULL AND TRIM(p_current_password) IS NOT NULL THEN
+        v_curr_calc := PKG_CRYPTO.hash_password(p_current_password, v_salt, v_iters);
+        IF v_curr_calc != v_hash THEN
+          RAISE_APPLICATION_ERROR(-20011, 'Current password is incorrect');
+        END IF;
+      END IF;
       IF LENGTH(p_new_password) > 100 OR NOT is_valid_password(p_new_password) THEN
         bad_request('Password needs 8+ characters with uppercase, lowercase, a number and a symbol');
       END IF;
       v_calc_hash := PKG_CRYPTO.hash_password(p_new_password, v_salt, v_iters);
-      IF (v_must = 'Y' AND v_calc_hash = v_hash) OR p_new_password = '@Admin' THEN
-        bad_request('New password must be different from the default password');
+      IF v_calc_hash = v_hash OR p_new_password = '@Admin' THEN
+        bad_request('New password cannot be the same as your current password');
       END IF;
     END IF;
 
@@ -1566,15 +1575,28 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     END IF;
 
     SELECT NVL(JSON_ARRAYAGG(JSON_OBJECT(
-                 'id'         VALUE u.id,
-                 'full_name'  VALUE u.full_name,
-                 'email'      VALUE u.email,
-                 'phone'      VALUE u.phone,
-                 'status'     VALUE u.status,
-                 'role'       VALUE COALESCE(
-                                      (SELECT MAX(ur.role_code) FROM user_roles ur WHERE ur.user_id = u.id),
-                                      'RUNNER'),
-                 'created_at' VALUE iso(u.created_at))
+                 'id'              VALUE u.id,
+                 'full_name'       VALUE u.full_name,
+                 'email'           VALUE u.email,
+                 'phone'           VALUE u.phone,
+                 'status'          VALUE u.status,
+                 'email_verified'  VALUE CASE WHEN u.email_verified_at IS NOT NULL THEN 'true' ELSE 'false' END FORMAT JSON,
+                 'deactivate_at'   VALUE iso(u.deactivate_at),
+                 'failed_attempts' VALUE COALESCE(
+                                           (SELECT MAX(ai.failed_attempts) FROM auth_identities ai WHERE ai.user_id = u.id AND ai.provider = 'PASSWORD'),
+                                           0),
+                 'locked_until'    VALUE (SELECT iso(MAX(ai.locked_until)) FROM auth_identities ai WHERE ai.user_id = u.id AND ai.provider = 'PASSWORD'),
+                 'is_locked'       VALUE CASE WHEN EXISTS (
+                                           SELECT 1 FROM auth_identities ai
+                                            WHERE ai.user_id = u.id
+                                              AND ai.provider = 'PASSWORD'
+                                              AND ai.locked_until IS NOT NULL
+                                              AND ai.locked_until > SYSTIMESTAMP
+                                         ) THEN 'true' ELSE 'false' END FORMAT JSON,
+                 'role'            VALUE COALESCE(
+                                           (SELECT MAX(ur.role_code) FROM user_roles ur WHERE ur.user_id = u.id),
+                                           'RUNNER'),
+                 'created_at'      VALUE iso(u.created_at))
                ORDER BY u.created_at DESC RETURNING CLOB), TO_CLOB('[]'))
       INTO v_items
       FROM users u
@@ -1626,6 +1648,18 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     -- Ensure single primary role assignment when updating role
     DELETE FROM user_roles WHERE user_id = p_user_id AND role_code <> v_role;
     PKG_ADMIN.approve_user(p_user_id, v_role);
+
+    -- Also clear any temporary password lockout or deactivation when an admin approves/unlocks the user
+    UPDATE auth_identities
+       SET failed_attempts = 0,
+           locked_until    = NULL,
+           updated_at      = SYSTIMESTAMP
+     WHERE user_id = p_user_id;
+    UPDATE users
+       SET status        = 'APPROVED',
+           deactivate_at = NULL,
+           updated_at    = SYSTIMESTAMP
+     WHERE id = p_user_id;
 
     v_outbox_id := LOWER(RAWTOHEX(SYS_GUID()));
     INSERT INTO email_outbox (id, template, to_address, payload, status)

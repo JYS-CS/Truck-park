@@ -162,7 +162,7 @@ private class FakeRemote : AuthRemoteDataSource {
         sessionToken: String,
         newEmail: String,
         newPassword: String,
-    ): AuthResult<Unit> = changePassword(sessionToken, newEmail, newPassword, expectedServerCode, null, null)
+    ): AuthResult<Unit> = changePassword(sessionToken, newEmail, newPassword, expectedServerCode, null, null, null)
 
     override suspend fun changePassword(
         sessionToken: String,
@@ -171,6 +171,7 @@ private class FakeRemote : AuthRemoteDataSource {
         code: String?,
         fullName: String?,
         phone: String?,
+        currentPassword: String?,
     ): AuthResult<Unit> {
         if (code != expectedServerCode) {
             return AuthResult.Failure(AuthError("INVALID_CODE", "Invalid or expired confirmation code.", 400))

@@ -119,8 +119,101 @@ fun MoreScreen(themeMode: ThemeMode, onThemeModeSelected: (ThemeMode) -> Unit) {
 }
 
 @Composable
-fun AppearanceCard(selected: ThemeMode, onSelected: (ThemeMode) -> Unit) {
-    ThemeModeSelector(selected = selected, onSelected = onSelected)
+fun AppearanceCard(
+    selected: ThemeMode,
+    onSelected: (ThemeMode) -> Unit,
+    initiallyExpanded: Boolean = false,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val dark = scheme.background.luminance() < 0.5f
+    var isExpanded by remember { mutableStateOf(initiallyExpanded) }
+    val selectedLabel = when (selected) {
+        ThemeMode.SYSTEM -> "System Default"
+        ThemeMode.LIGHT -> "Light Theme"
+        ThemeMode.DARK -> "Dark Theme"
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(scheme.surfaceVariant.copy(alpha = if (dark) 0.35f else 0.55f))
+            .border(1.dp, scheme.outlineVariant.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .clickable { isExpanded = !isExpanded }
+                .padding(vertical = 2.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.weight(1f),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(scheme.primary.copy(alpha = 0.14f))
+                        .border(1.dp, scheme.primary.copy(alpha = 0.30f), RoundedCornerShape(12.dp)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = when (selected) {
+                            ThemeMode.SYSTEM -> TruckParkIcons.ThemeSystem
+                            ThemeMode.LIGHT -> TruckParkIcons.ThemeLight
+                            ThemeMode.DARK -> TruckParkIcons.ThemeDark
+                        },
+                        contentDescription = null,
+                        tint = Color.Unspecified,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = stringResource(R.string.appearance_title),
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = scheme.onSurface,
+                    )
+                    Text(
+                        text = "Current: $selectedLabel",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = scheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(scheme.surface.copy(alpha = if (dark) 0.45f else 0.70f))
+                    .border(1.dp, scheme.outlineVariant.copy(alpha = 0.35f), CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (isExpanded) "Collapse appearance" else "Expand appearance",
+                    tint = scheme.primary,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        }
+
+        AnimatedVisibility(
+            visible = isExpanded,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut(),
+        ) {
+            ThemeModeSelector(selected = selected, onSelected = onSelected)
+        }
+    }
 }
 
 @Composable
@@ -304,8 +397,10 @@ fun MoreOptionsBottomSheet(
                         var fullNameInput by remember(user.id, user.fullName) { mutableStateOf(user.fullName) }
                         var phoneInput by remember(user.id, user.phone) { mutableStateOf(user.phone.orEmpty()) }
                         var emailInput by remember(user.id, user.email) { mutableStateOf(user.email) }
+                        var currentPasswordInput by remember(user.id) { mutableStateOf("") }
                         var newPasswordInput by remember(user.id) { mutableStateOf("") }
-                        var confirmPasswordInput by remember(user.id) { mutableStateOf("") }
+                        var showCurrentPassword by remember(user.id) { mutableStateOf(true) }
+                        var showNewPassword by remember(user.id) { mutableStateOf(true) }
 
                         // Dual 6-digit OTP state when changing email address (Old Email -> New Email)
                         val cleanEmailInput = emailInput.trim().lowercase()
@@ -821,19 +916,22 @@ fun MoreOptionsBottomSheet(
                                     }
 
                                     // Strict password validation rules (enforced whenever a new password is entered)
+                                    val isChangingPassword = newPasswordInput.isNotEmpty() || currentPasswordInput.isNotEmpty()
+                                    val hasCurrentPassword = currentPasswordInput.isNotEmpty()
+                                    val isDifferentFromCurrent = newPasswordInput.isNotEmpty() && newPasswordInput != currentPasswordInput
                                     val pwdHasMinLength = newPasswordInput.length >= 8
                                     val pwdHasUpper = newPasswordInput.any { it.isUpperCase() }
                                     val pwdHasLower = newPasswordInput.any { it.isLowerCase() }
                                     val pwdHasDigit = newPasswordInput.any { it.isDigit() }
                                     val pwdHasSymbol = newPasswordInput.any { !it.isLetterOrDigit() }
-                                    val pwdMatchesConfirm = confirmPasswordInput.isNotEmpty() && newPasswordInput == confirmPasswordInput
-                                    val isNewPasswordValid = newPasswordInput.isEmpty() || (
-                                        pwdHasMinLength &&
+                                    val isNewPasswordValid = !isChangingPassword || (
+                                        hasCurrentPassword &&
+                                            isDifferentFromCurrent &&
+                                            pwdHasMinLength &&
                                             pwdHasUpper &&
                                             pwdHasLower &&
                                             pwdHasDigit &&
-                                            pwdHasSymbol &&
-                                            pwdMatchesConfirm
+                                            pwdHasSymbol
                                         )
 
                                     // 5. Optional Password Change Collapsible Section
@@ -880,24 +978,38 @@ fun MoreOptionsBottomSheet(
                                         AnimatedVisibility(visible = showPasswordSection) {
                                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                                 ProfileInputField(
+                                                    label = "Current Password",
+                                                    value = currentPasswordInput,
+                                                    onValueChange = { currentPasswordInput = it.take(100) },
+                                                    placeholder = "Enter your current password",
+                                                    leadingIcon = Icons.Default.Lock,
+                                                    isPassword = true,
+                                                    isPasswordVisible = showCurrentPassword,
+                                                    onTogglePasswordVisibility = { showCurrentPassword = !showCurrentPassword },
+                                                )
+                                                ProfileInputField(
                                                     label = "New Password",
                                                     value = newPasswordInput,
                                                     onValueChange = { newPasswordInput = it.take(100) },
-                                                    placeholder = "New password",
+                                                    placeholder = "Enter your new password",
                                                     leadingIcon = Icons.Default.Lock,
                                                     isPassword = true,
-                                                )
-                                                ProfileInputField(
-                                                    label = "Confirm New Password",
-                                                    value = confirmPasswordInput,
-                                                    onValueChange = { confirmPasswordInput = it.take(100) },
-                                                    placeholder = "Confirm new password",
-                                                    leadingIcon = Icons.Default.Lock,
-                                                    isPassword = true,
+                                                    isPasswordVisible = showNewPassword,
+                                                    onTogglePasswordVisibility = { showNewPassword = !showNewPassword },
                                                 )
 
+                                                if (currentPasswordInput.isNotEmpty() && newPasswordInput.isNotEmpty() && currentPasswordInput == newPasswordInput) {
+                                                    Text(
+                                                        text = "New password cannot be the same as your current password.",
+                                                        style = MaterialTheme.typography.labelSmall.copy(
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = Color(0xFFEF4444),
+                                                        ),
+                                                    )
+                                                }
+
                                                 // Live Password Strictness Checklist
-                                                if (newPasswordInput.isNotEmpty() || confirmPasswordInput.isNotEmpty()) {
+                                                if (isChangingPassword) {
                                                     Column(
                                                         modifier = Modifier
                                                             .fillMaxWidth()
@@ -913,12 +1025,13 @@ fun MoreOptionsBottomSheet(
                                                                 color = MaterialTheme.colorScheme.onSurface,
                                                             ),
                                                         )
+                                                        PasswordRequirementRow("Current password entered", hasCurrentPassword)
+                                                        PasswordRequirementRow("Different from current password", isDifferentFromCurrent)
                                                         PasswordRequirementRow("At least 8 characters", pwdHasMinLength)
                                                         PasswordRequirementRow("At least 1 capital letter (A–Z)", pwdHasUpper)
                                                         PasswordRequirementRow("At least 1 lowercase letter (a–z)", pwdHasLower)
                                                         PasswordRequirementRow("At least 1 number (0–9)", pwdHasDigit)
                                                         PasswordRequirementRow("At least 1 symbol (!@#\$%^&*)", pwdHasSymbol)
-                                                        PasswordRequirementRow("Passwords match", pwdMatchesConfirm)
                                                     }
                                                 }
                                             }
@@ -968,14 +1081,15 @@ fun MoreOptionsBottomSheet(
                                                     newEmail = cleanEmailInput,
                                                     fullName = fullNameInput.trim(),
                                                     phone = phoneInput.trim(),
+                                                    currentPassword = currentPasswordInput.takeIf { it.isNotBlank() },
                                                     newPassword = newPasswordInput.takeIf { it.isNotBlank() },
                                                     code = if (isEmailChanged) newEmailCodeInput else null,
                                                 ) { res ->
                                                     isBusy = false
                                                     when (res) {
                                                         is AuthResult.Success -> {
+                                                            currentPasswordInput = ""
                                                             newPasswordInput = ""
-                                                            confirmPasswordInput = ""
                                                             oldEmailCodeInput = ""
                                                             newEmailCodeInput = ""
                                                             oldEmailCodeSent = false
@@ -1032,8 +1146,8 @@ fun MoreOptionsBottomSheet(
                         }
                     }
 
-                    // Theme Mode Selection
-                    ThemeModeSelector(
+                    // Collapsible Appearance Card with Chevron Arrow
+                    AppearanceCard(
                         selected = themeMode,
                         onSelected = onThemeModeSelected,
                     )
@@ -1135,6 +1249,8 @@ private fun ProfileInputField(
     leadingIcon: androidx.compose.ui.graphics.vector.ImageVector? = null,
     isMonospace: Boolean = false,
     isPassword: Boolean = false,
+    isPasswordVisible: Boolean = true,
+    onTogglePasswordVisibility: (() -> Unit)? = null,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -1170,7 +1286,11 @@ private fun ProfileInputField(
                     value = value,
                     onValueChange = onValueChange,
                     singleLine = true,
-                    visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
+                    visualTransformation = if (isPassword && !isPasswordVisible) {
+                        PasswordVisualTransformation()
+                    } else {
+                        VisualTransformation.None
+                    },
                     keyboardOptions = keyboardOptions,
                     cursorBrush = SolidColor(scheme.primary),
                     textStyle = MaterialTheme.typography.bodyMedium.copy(
@@ -1178,7 +1298,7 @@ private fun ProfileInputField(
                         fontFamily = if (isMonospace) FontFamily.Monospace else FontFamily.Default,
                         fontWeight = if (isMonospace) FontWeight.Bold else FontWeight.Medium,
                     ),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.weight(1f),
                     decorationBox = { inner ->
                         if (value.isEmpty() && placeholder.isNotEmpty()) {
                             Text(
@@ -1191,6 +1311,25 @@ private fun ProfileInputField(
                         inner()
                     },
                 )
+                if (isPassword && onTogglePasswordVisibility != null) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(scheme.primary.copy(alpha = 0.14f))
+                            .border(0.8.dp, scheme.primary.copy(alpha = 0.35f), RoundedCornerShape(999.dp))
+                            .clickable(onClick = onTogglePasswordVisibility)
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                    ) {
+                        Text(
+                            text = if (isPasswordVisible) "Hide" else "Show",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 10.sp,
+                                color = scheme.primary,
+                            ),
+                        )
+                    }
+                }
             }
         }
     }

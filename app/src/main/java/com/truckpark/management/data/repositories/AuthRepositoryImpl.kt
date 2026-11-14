@@ -255,6 +255,7 @@ class AuthRepositoryImpl(
         newEmail: String,
         fullName: String,
         phone: String,
+        currentPassword: String?,
         newPassword: String?,
         code: String?,
     ): AuthResult<AuthUser> {
@@ -265,10 +266,27 @@ class AuthRepositoryImpl(
         val cleanEmail = newEmail.trim().lowercase().ifBlank { current.email.trim().lowercase() }
         val cleanName = fullName.trim().ifBlank { current.fullName }
         val cleanPhone = phone.trim()
+        val cleanCurrentPwd = currentPassword?.takeIf { it.isNotBlank() }.orEmpty()
         val cleanPwd = newPassword?.takeIf { it.isNotBlank() }.orEmpty()
         val cleanCode = code?.trim()?.takeIf { it.isNotBlank() }
 
         if (cleanPwd.isNotEmpty()) {
+            if (cleanCurrentPwd.isEmpty()) {
+                return AuthResult.Failure(
+                    AuthError(
+                        "MISSING_CURRENT_PASSWORD",
+                        "Enter your current password first to set a new password.",
+                    ),
+                )
+            }
+            if (cleanPwd == cleanCurrentPwd) {
+                return AuthResult.Failure(
+                    AuthError(
+                        "SAME_PASSWORD",
+                        "New password cannot be the same as your current password.",
+                    ),
+                )
+            }
             val isStrictValid = cleanPwd.length in 8..100 &&
                 cleanPwd.any { it.isUpperCase() } &&
                 cleanPwd.any { it.isLowerCase() } &&
@@ -300,6 +318,7 @@ class AuthRepositoryImpl(
                 code = cleanCode,
                 fullName = cleanName,
                 phone = cleanPhone,
+                currentPassword = cleanCurrentPwd.ifBlank { null },
             )
         }
 
@@ -484,6 +503,9 @@ class AuthRepositoryImpl(
 
     override suspend fun updateUserRole(userId: String, roleCode: String): AuthResult<Unit> =
         authorised { token -> remote.updateUserRole(token, userId, roleCode) }
+
+    override suspend fun deactivateUser(userId: String): AuthResult<Unit> =
+        authorised { token -> remote.deactivateUser(token, userId) }
 
     override suspend fun listDevices(): AuthResult<List<ManagedDevice>> =
         authorised { token -> remote.listDevices(token) }

@@ -75,6 +75,7 @@ CREATE OR REPLACE PACKAGE PKG_API AS
     p_code IN VARCHAR2 DEFAULT NULL,
     p_full_name IN VARCHAR2 DEFAULT NULL,
     p_phone IN VARCHAR2 DEFAULT NULL,
+    p_current_password IN VARCHAR2 DEFAULT NULL,
     p_status OUT NUMBER, p_body OUT CLOB);
 
   PROCEDURE logout(

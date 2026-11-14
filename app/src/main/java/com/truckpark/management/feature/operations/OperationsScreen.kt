@@ -7,6 +7,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -39,6 +40,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.CircularProgressIndicator
@@ -51,6 +53,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,16 +62,22 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -108,15 +117,109 @@ fun OperationsScreen(
     onNavigateToVisits: () -> Unit = {},
     onMenuClick: (() -> Unit)? = null,
 ) {
+    val isAdminDashboard = user != null && user.isAdmin && isHomeTab && authViewModel != null
+    val resolvedVisitsVm = if (isAdminDashboard) {
+        visitsViewModel ?: viewModel(factory = VisitsViewModel.Factory)
+    } else {
+        null
+    }
+    val visitsState = resolvedVisitsVm?.uiState?.collectAsStateWithLifecycle()?.value
+
+    var dashboardUsers by remember { mutableStateOf<List<ManagedUser>>(emptyList()) }
+    var dashboardDevices by remember { mutableStateOf<List<ManagedDevice>>(emptyList()) }
+    var isRefreshingAdminData by remember { mutableStateOf(false) }
+    var adminRefreshTrigger by remember { mutableIntStateOf(0) }
+
+    val scrollState = rememberScrollState()
+    val density = LocalDensity.current
+    var pullOffsetPx by remember { mutableFloatStateOf(0f) }
+    val refreshThresholdPx = remember(density) { with(density) { 72.dp.toPx() } }
+    val maxPullPx = remember(density) { with(density) { 120.dp.toPx() } }
+
+    val isSyncBusy = (visitsState?.isSyncing == true) || isRefreshingAdminData
+
+    LaunchedEffect(isSyncBusy) {
+        if (!isSyncBusy) {
+            pullOffsetPx = 0f
+        }
+    }
+
+    fun triggerFullRefresh() {
+        if (!isAdminDashboard || authViewModel == null) return
+        isRefreshingAdminData = true
+        adminRefreshTrigger++
+        resolvedVisitsVm?.syncAndRefresh(silent = true)
+        var pendingCallbacks = 2
+        fun markDone() {
+            pendingCallbacks--
+            if (pendingCallbacks <= 0) {
+                isRefreshingAdminData = false
+            }
+        }
+        authViewModel.loadManagedUsers { res ->
+            if (res is AuthResult.Success) dashboardUsers = res.value
+            markDone()
+        }
+        authViewModel.loadManagedDevices { res ->
+            if (res is AuthResult.Success) dashboardDevices = res.value
+            markDone()
+        }
+    }
+
+    val nestedScrollConnection = remember(scrollState, isSyncBusy, isAdminDashboard) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (isAdminDashboard && available.y < 0f && pullOffsetPx > 0f) {
+                    val consumedY = available.y.coerceAtLeast(-pullOffsetPx)
+                    pullOffsetPx = (pullOffsetPx + consumedY).coerceAtLeast(0f)
+                    return Offset(0f, consumedY)
+                }
+                return Offset.Zero
+            }
+
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource,
+            ): Offset {
+                val isAtTop = scrollState.value == 0
+                if (isAdminDashboard && source == NestedScrollSource.UserInput && isAtTop && available.y > 0f) {
+                    if (!isSyncBusy) {
+                        pullOffsetPx = (pullOffsetPx + available.y * 0.55f).coerceIn(0f, maxPullPx)
+                        return Offset(0f, available.y)
+                    }
+                }
+                return Offset.Zero
+            }
+
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                if (isAdminDashboard && pullOffsetPx >= refreshThresholdPx && !isSyncBusy) {
+                    pullOffsetPx = 0f
+                    triggerFullRefresh()
+                } else {
+                    pullOffsetPx = 0f
+                }
+                return Velocity.Zero
+            }
+        }
+    }
+
+    val pullProgress = (pullOffsetPx / refreshThresholdPx).coerceIn(0f, 1f)
+    val showPullIndicator = isAdminDashboard && (pullOffsetPx > 8f || isSyncBusy)
+    val scheme = MaterialTheme.colorScheme
+    val extras = TruckParkExtras.colors
+
     Box(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .nestedScroll(nestedScrollConnection),
         contentAlignment = Alignment.TopCenter,
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .widthIn(max = 680.dp)
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scrollState)
                 .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
@@ -171,12 +274,72 @@ fun OperationsScreen(
                 }
             }
 
-            if (user != null && user.isAdmin && isHomeTab && authViewModel != null) {
-                val resolvedVisitsVm = visitsViewModel ?: viewModel(factory = VisitsViewModel.Factory)
-                val visitsState by resolvedVisitsVm.uiState.collectAsStateWithLifecycle()
-                var dashboardUsers by remember { mutableStateOf<List<ManagedUser>>(emptyList()) }
-                var dashboardDevices by remember { mutableStateOf<List<ManagedDevice>>(emptyList()) }
+            // Pull-Down to Refresh Indicator
+            AnimatedVisibility(
+                visible = showPullIndicator,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut(),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 2.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(extras.glassFill)
+                            .border(
+                                BorderStroke(
+                                    1.dp,
+                                    if (pullProgress >= 1f || isSyncBusy) {
+                                        scheme.primary.copy(alpha = 0.55f)
+                                    } else {
+                                        extras.glassBorder
+                                    },
+                                ),
+                                RoundedCornerShape(999.dp),
+                            )
+                            .padding(horizontal = 14.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        if (isSyncBusy) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                strokeWidth = 2.dp,
+                                color = scheme.primary,
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = null,
+                                tint = if (pullProgress >= 1f) scheme.primary else scheme.onSurfaceVariant,
+                                modifier = Modifier.size(15.dp),
+                            )
+                        }
+                        Text(
+                            text = when {
+                                isSyncBusy -> "Refreshing dashboard..."
+                                pullProgress >= 1f -> "Release to refresh"
+                                else -> "Pull down to refresh"
+                            },
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                color = if (pullProgress >= 1f || isSyncBusy) {
+                                    scheme.primary
+                                } else {
+                                    scheme.onSurfaceVariant
+                                },
+                            ),
+                        )
+                    }
+                }
+            }
 
+            if (isAdminDashboard && user != null && authViewModel != null && visitsState != null) {
                 LaunchedEffect(Unit) {
                     authViewModel.loadManagedUsers { res ->
                         if (res is AuthResult.Success) dashboardUsers = res.value
@@ -192,13 +355,51 @@ fun OperationsScreen(
                     users = dashboardUsers,
                     devices = dashboardDevices,
                     onNavigateToVisits = onNavigateToVisits,
-                    onRefreshDashboard = {
-                        resolvedVisitsVm.syncAndRefresh(silent = true)
-                        authViewModel.loadManagedUsers { res ->
-                            if (res is AuthResult.Success) dashboardUsers = res.value
+                    onRefreshDashboard = ::triggerFullRefresh,
+                    onUnlockOrEnableUser = { targetUserId, roleCode, onDone ->
+                        authViewModel.updateUserRole(targetUserId, roleCode) { res ->
+                            when (res) {
+                                is AuthResult.Success -> {
+                                    dashboardUsers = dashboardUsers.map { u ->
+                                        if (u.id == targetUserId) {
+                                            u.copy(
+                                                status = "APPROVED",
+                                                isLocked = false,
+                                                failedAttempts = 0,
+                                                lockedUntil = null,
+                                                deactivateAt = null,
+                                            )
+                                        } else {
+                                            u
+                                        }
+                                    }
+                                    adminRefreshTrigger++
+                                    onDone(true, "Account unlocked and enabled.")
+                                }
+                                is AuthResult.Failure -> {
+                                    onDone(false, res.error.message)
+                                }
+                            }
                         }
-                        authViewModel.loadManagedDevices { res ->
-                            if (res is AuthResult.Success) dashboardDevices = res.value
+                    },
+                    onDeactivateUser = { targetUserId, onDone ->
+                        authViewModel.deactivateUser(targetUserId) { res ->
+                            when (res) {
+                                is AuthResult.Success -> {
+                                    dashboardUsers = dashboardUsers.map { u ->
+                                        if (u.id == targetUserId) {
+                                            u.copy(status = "DEACTIVATED")
+                                        } else {
+                                            u
+                                        }
+                                    }
+                                    adminRefreshTrigger++
+                                    onDone(true, "Account disabled.")
+                                }
+                                is AuthResult.Failure -> {
+                                    onDone(false, res.error.message)
+                                }
+                            }
                         }
                     },
                 )
@@ -206,6 +407,7 @@ fun OperationsScreen(
                 AdminManagementPanel(
                     currentUser = user,
                     authViewModel = authViewModel,
+                    refreshTrigger = adminRefreshTrigger,
                 )
             } else {
                 // Planned feature placeholder card (for Registers / Reports / non-Admin Home)
@@ -277,6 +479,7 @@ fun OperationsScreen(
 private fun AdminManagementPanel(
     currentUser: AuthUser,
     authViewModel: AuthViewModel,
+    refreshTrigger: Int = 0,
 ) {
     var isExpanded by remember { mutableStateOf(false) }
     var users by remember { mutableStateOf<List<ManagedUser>>(emptyList()) }
@@ -391,7 +594,7 @@ private fun AdminManagementPanel(
         refreshDevices()
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(refreshTrigger) {
         refreshAll()
     }
 
@@ -1176,15 +1379,11 @@ private fun StaffFlatRow(
                     text = displayName,
                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                     color = scheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     text = staff.email,
                     style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
                     color = scheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
             }
 
@@ -1309,7 +1508,10 @@ private fun StaffDetailView(
             )
         }
 
-        // Info Block (Email, Phone, Role, Handsets count)
+        // Info Block (Email, Phone, Role, Account Status, Lock Status, Handsets count)
+        val isStaffLocked = staff.isLocked ||
+            staff.status.equals("DEACTIVATED", ignoreCase = true) ||
+            staff.status.equals("REJECTED", ignoreCase = true)
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1319,7 +1521,10 @@ private fun StaffDetailView(
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            InfoRow(label = stringResource(R.string.lbl_email), value = staff.email)
+            InfoRow(
+                label = stringResource(R.string.lbl_email),
+                value = "${staff.email} (${if (staff.emailVerified) "Verified" else "Not verified"})",
+            )
             HorizontalDivider(color = scheme.outlineVariant.copy(alpha = 0.2f))
             InfoRow(
                 label = stringResource(R.string.lbl_phone),
@@ -1327,6 +1532,28 @@ private fun StaffDetailView(
             )
             HorizontalDivider(color = scheme.outlineVariant.copy(alpha = 0.2f))
             InfoRow(label = stringResource(R.string.lbl_role), value = staff.role)
+            HorizontalDivider(color = scheme.outlineVariant.copy(alpha = 0.2f))
+            InfoRow(
+                label = "Account Status",
+                value = when (staff.status.uppercase()) {
+                    "APPROVED" -> "Approved & Active"
+                    "PENDING_VERIFICATION" -> "Waiting for Email Verification"
+                    "PENDING_APPROVAL" -> "Waiting for Admin Approval"
+                    "DEACTIVATED" -> "Disabled / Deactivated"
+                    "REJECTED" -> "Rejected"
+                    else -> staff.status
+                },
+            )
+            HorizontalDivider(color = scheme.outlineVariant.copy(alpha = 0.2f))
+            InfoRow(
+                label = "Lock Status",
+                value = when {
+                    staff.status.equals("DEACTIVATED", ignoreCase = true) -> "Disabled (Cannot sign in)"
+                    isStaffLocked -> "Locked (${staff.failedAttempts} failed sign-in attempts)"
+                    staff.failedAttempts > 0 -> "Unlocked (${staff.failedAttempts} recent failed attempt(s))"
+                    else -> "Unlocked (Can sign in normally)"
+                },
+            )
             HorizontalDivider(color = scheme.outlineVariant.copy(alpha = 0.2f))
             InfoRow(
                 label = stringResource(R.string.lbl_handsets),
@@ -1622,15 +1849,15 @@ private data class PermissionItem(
 private val COMMON_PERMISSIONS = listOf(
     PermissionItem("visit.arrive", "Gate Arrival", "Record truck check-in and gate arrivals"),
     PermissionItem("visit.depart", "Gate Departure", "Record truck check-out and gate departures"),
-    PermissionItem("visit.correct_critical", "Critical Edits", "Correct critical visit and payload records"),
-    PermissionItem("visit.override_open", "Gate Override", "Manually trigger gate open overrides"),
-    PermissionItem("device.manage", "Handset Governance", "Authorize and revoke active handsets"),
-    PermissionItem("audit.view", "Audit Logs", "View operational and security audit events"),
-    PermissionItem("sync.push", "Push Sync", "Force sync local records to backend"),
-    PermissionItem("sync.pull", "Pull Sync", "Pull real-time cloud data updates"),
-    PermissionItem("user.invite", "Invite Staff", "Create and send staff invite tokens"),
-    PermissionItem("user.approve", "Approve Staff", "Approve or reject pending staff registrations"),
-    PermissionItem("user.deactivate", "Deactivate Users", "Deactivate and terminate staff accounts"),
+    PermissionItem("visit.correct_critical", "Edit Visit Records", "Update truck, driver, cargo and seal details"),
+    PermissionItem("visit.override_open", "Gate Override", "Allow duplicate or manual gate entry overrides"),
+    PermissionItem("device.manage", "Manage Handsets", "Allow or block registered staff phones"),
+    PermissionItem("audit.view", "Activity History", "View security and gate activity logs"),
+    PermissionItem("sync.push", "Upload to Cloud", "Send saved device records to the cloud"),
+    PermissionItem("sync.pull", "Download from Cloud", "Fetch latest cloud updates to the device"),
+    PermissionItem("user.invite", "Invite Staff", "Send email invitations to new staff members"),
+    PermissionItem("user.approve", "Approve & Manage Roles", "Approve staff and change their access roles"),
+    PermissionItem("user.deactivate", "Disable Accounts", "Disable or lock staff accounts"),
 )
 
 private fun formatExpiryTime(raw: String?): String {
@@ -2496,25 +2723,24 @@ private fun formatRelativeTime(raw: String?, fallback: String = "Recently"): Str
     return if (years <= 1L) "1 year ago" else "$years years ago"
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun InfoRow(label: String, value: String) {
-    Row(
+    FlowRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.Top,
+        verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(end = 12.dp),
         )
-        Spacer(Modifier.width(12.dp))
         Text(
             text = value,
             style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
             color = MaterialTheme.colorScheme.onSurface,
-            textAlign = TextAlign.End,
-            modifier = Modifier.weight(1f, fill = false),
         )
     }
 }

@@ -30,6 +30,7 @@ interface AuthRepository {
         newEmail: String,
         fullName: String,
         phone: String,
+        currentPassword: String? = null,
         newPassword: String? = null,
         code: String? = null,
     ): AuthResult<AuthUser>
@@ -45,6 +46,7 @@ interface AuthRepository {
     suspend fun resetPassword(email: String, code: String, newPassword: String): AuthResult<Unit>
     suspend fun listUsers(status: String? = null): AuthResult<List<ManagedUser>>
     suspend fun updateUserRole(userId: String, roleCode: String): AuthResult<Unit>
+    suspend fun deactivateUser(userId: String): AuthResult<Unit> = AuthResult.Success(Unit)
     suspend fun listDevices(): AuthResult<List<ManagedDevice>>
     suspend fun revokeDevice(deviceId: String, reason: String): AuthResult<Unit>
     suspend fun reinstateDevice(deviceId: String): AuthResult<Unit>

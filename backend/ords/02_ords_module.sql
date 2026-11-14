@@ -236,7 +236,7 @@ BEGIN
   add_handler('auth/logout', 'POST',
     'PKG_API.logout(:authorization, v_s, v_b);');
   add_handler('auth/change-password', 'POST',
-    'PKG_API.change_password(:authorization, :new_email, :new_password, :code, :full_name, :phone, v_s, v_b);');
+    'PKG_API.change_password(:authorization, :new_email, :new_password, :code, :full_name, :phone, :current_password, v_s, v_b);');
   add_handler('auth/send-verification-code', 'POST',
     'PKG_API.send_verification_code(:authorization, :email, v_s, v_b);');
   add_handler('me', 'GET',

@@ -62,6 +62,7 @@ interface AuthRemoteDataSource {
         code: String?,
         fullName: String? = null,
         phone: String? = null,
+        currentPassword: String? = null,
     ): AuthResult<Unit> = changePassword(sessionToken, newEmail, newPassword)
     suspend fun requestPasswordReset(email: String): AuthResult<Unit> = AuthResult.Success(Unit)
     suspend fun requestPasswordReset(email: String, deviceId: String?): AuthResult<Unit> =
@@ -83,6 +84,10 @@ interface AuthRemoteDataSource {
         sessionToken: String,
         userId: String,
         roleCode: String,
+    ): AuthResult<Unit> = AuthResult.Success(Unit)
+    suspend fun deactivateUser(
+        sessionToken: String,
+        userId: String,
     ): AuthResult<Unit> = AuthResult.Success(Unit)
     suspend fun listDevices(sessionToken: String): AuthResult<List<ManagedDevice>> =
         AuthResult.Success(emptyList())

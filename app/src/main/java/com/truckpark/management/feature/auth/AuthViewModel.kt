@@ -227,6 +227,7 @@ class AuthViewModel(
         newEmail: String,
         fullName: String,
         phone: String,
+        currentPassword: String? = null,
         newPassword: String? = null,
         code: String? = null,
         onComplete: (AuthResult<AuthUser>) -> Unit,
@@ -236,6 +237,7 @@ class AuthViewModel(
                 newEmail = newEmail,
                 fullName = fullName,
                 phone = phone,
+                currentPassword = currentPassword,
                 newPassword = newPassword,
                 code = code,
             )
@@ -327,6 +329,16 @@ class AuthViewModel(
             if (result is AuthResult.Success && current is AuthUiState.Authenticated && current.user.id == userId) {
                 checkCurrentSession()
             }
+            onComplete(result)
+        }
+    }
+
+    fun deactivateUser(
+        userId: String,
+        onComplete: (AuthResult<Unit>) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val result = authRepository.deactivateUser(userId)
             onComplete(result)
         }
     }
