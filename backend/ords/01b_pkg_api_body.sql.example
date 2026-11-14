@@ -1329,33 +1329,62 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
     p_phone IN VARCHAR2 DEFAULT NULL,
     p_status OUT NUMBER, p_body OUT CLOB
   ) IS
-    v_user_id      VARCHAR2(36);
-    v_hash         VARCHAR2(255);
-    v_salt         RAW(16);
-    v_iters        NUMBER;
-    v_calc_hash    VARCHAR2(255);
-    v_new_salt     RAW(16);
-    v_new_hash     VARCHAR2(255);
-    v_new_email    VARCHAR2(320);
-    v_taken        NUMBER;
-    v_must         VARCHAR2(1);
-    v_issued       TIMESTAMP WITH TIME ZONE;
-    v_target_match NUMBER;
+    v_user_id       VARCHAR2(36);
+    v_hash          VARCHAR2(255);
+    v_salt          RAW(16);
+    v_iters         NUMBER;
+    v_calc_hash     VARCHAR2(255);
+    v_new_salt      RAW(16);
+    v_new_hash      VARCHAR2(255);
+    v_current_email VARCHAR2(320);
+    v_verified_at   TIMESTAMP WITH TIME ZONE;
+    v_new_email     VARCHAR2(320);
+    v_taken         NUMBER;
+    v_must          VARCHAR2(1);
+    v_target_match  NUMBER;
+    v_email_changed BOOLEAN;
+    v_has_new_pwd   BOOLEAN;
   BEGIN
-    -- The signed-in session is the proof of identity for this setup step.
+    -- The signed-in session is the proof of identity.
     PKG_AUTHZ.validate_session(bearer_token(p_authorization));
     v_user_id := PKG_AUTHZ.get_current_user_id();
 
-    require_text(p_new_password, 'new_password', 100);
+    SELECT email_verified_at, LOWER(TRIM(email))
+      INTO v_verified_at, v_current_email
+      FROM users
+     WHERE id = v_user_id;
 
-    IF NOT is_valid_password(p_new_password) THEN
-      bad_request('Password needs 8+ characters with uppercase, lowercase, a number and a symbol');
-    END IF;
+    -- Fetch current stored credentials
+    BEGIN
+      SELECT password_hash, password_salt, password_iters, password_must_change
+        INTO v_hash, v_salt, v_iters, v_must
+        FROM auth_identities
+       WHERE user_id = v_user_id AND provider = 'PASSWORD';
+    EXCEPTION
+      WHEN NO_DATA_FOUND THEN
+        bad_request('Account does not have password identity configured');
+    END;
 
-    -- New email is required: the default address cannot receive codes.
-    v_new_email := LOWER(TRIM(p_new_email));
+    v_new_email := NVL(LOWER(TRIM(p_new_email)), v_current_email);
     IF NOT is_valid_email(v_new_email) OR v_new_email = 'admin@hibiscuss.com' THEN
       bad_request('Enter a valid email address');
+    END IF;
+
+    v_email_changed := (v_new_email != v_current_email);
+    v_has_new_pwd   := (p_new_password IS NOT NULL AND TRIM(p_new_password) IS NOT NULL);
+
+    IF v_must = 'Y' AND NOT v_has_new_pwd THEN
+      bad_request('new_password is required');
+    END IF;
+
+    IF v_has_new_pwd THEN
+      IF LENGTH(p_new_password) > 100 OR NOT is_valid_password(p_new_password) THEN
+        bad_request('Password needs 8+ characters with uppercase, lowercase, a number and a symbol');
+      END IF;
+      v_calc_hash := PKG_CRYPTO.hash_password(p_new_password, v_salt, v_iters);
+      IF (v_must = 'Y' AND v_calc_hash = v_hash) OR p_new_password = '@Admin' THEN
+        bad_request('New password must be different from the default password');
+      END IF;
     END IF;
 
     SELECT COUNT(*) INTO v_taken
@@ -1372,97 +1401,66 @@ CREATE OR REPLACE PACKAGE BODY PKG_API AS
       RETURN;
     END IF;
 
-    IF p_code IS NULL OR NOT REGEXP_LIKE(TRIM(p_code), '^[0-9]{6}$') THEN
-      bad_request('A 6-digit confirmation code is required');
-    END IF;
-
-    -- Fetch current stored credentials
-    BEGIN
-      SELECT password_hash, password_salt, password_iters, password_must_change
-        INTO v_hash, v_salt, v_iters, v_must
-        FROM auth_identities
-       WHERE user_id = v_user_id AND provider = 'PASSWORD';
-    EXCEPTION
-      WHEN NO_DATA_FOUND THEN
-        bad_request('Account does not have password identity configured');
-    END;
-
-    -- Only accounts still undergoing initial setup (password_must_change = 'Y' OR email not yet verified)
-    -- may use this step. Once fully verified and set up, changes require the standard change flow.
-    DECLARE
-      v_verified_at   TIMESTAMP WITH TIME ZONE;
-      v_current_email VARCHAR2(320);
-    BEGIN
-      SELECT email_verified_at, LOWER(email) INTO v_verified_at, v_current_email FROM users WHERE id = v_user_id;
-      IF v_must != 'Y' AND v_verified_at IS NOT NULL AND v_current_email != 'admin@hibiscuss.com' THEN
-        RAISE_APPLICATION_ERROR(-20003, 'Account setup is already complete');
+    -- Require and verify 6-digit email OTP whenever email is being changed or initial setup is incomplete
+    IF v_email_changed OR v_must = 'Y' OR v_verified_at IS NULL OR v_current_email = 'admin@hibiscuss.com' THEN
+      IF p_code IS NULL OR NOT REGEXP_LIKE(TRIM(p_code), '^[0-9]{6}$') THEN
+        bad_request('A 6-digit confirmation code is required to verify the email address');
       END IF;
-    END;
 
-    -- Prevent keeping the default setup password
-    v_calc_hash := PKG_CRYPTO.hash_password(p_new_password, v_salt, v_iters);
-    IF (v_must = 'Y' AND v_calc_hash = v_hash) OR p_new_password = '@Admin' THEN
-      bad_request('New password must be different from the default password');
+      SELECT COUNT(*) INTO v_target_match
+        FROM email_outbox
+       WHERE template IN ('VERIFY_EMAIL', 'ADMIN_SETUP_VERIFY')
+         AND row_version = 1
+         AND JSON_VALUE(payload, '$.user_id') = v_user_id
+         AND LOWER(to_address) != v_new_email;
+      IF v_target_match > 0 THEN
+        RAISE_APPLICATION_ERROR(-20013, 'Email address changed after code was sent. Please request a new confirmation code.');
+      END IF;
+
+      PKG_AUTH.verify_email(v_user_id, TRIM(p_code));
+
+      UPDATE email_outbox
+         SET row_version = 2,
+             updated_at  = SYSTIMESTAMP
+       WHERE template IN ('VERIFY_EMAIL', 'ADMIN_SETUP_VERIFY')
+         AND row_version = 1
+         AND JSON_VALUE(payload, '$.user_id') = v_user_id;
     END IF;
 
-    -- Ensure the email being saved matches the address to which the verification code was sent
-    SELECT COUNT(*) INTO v_target_match
-      FROM email_outbox
-     WHERE template IN ('VERIFY_EMAIL', 'ADMIN_SETUP_VERIFY')
-       AND row_version = 1
-       AND JSON_VALUE(payload, '$.user_id') = v_user_id
-       AND LOWER(to_address) != v_new_email;
-    IF v_target_match > 0 THEN
-      RAISE_APPLICATION_ERROR(-20013, 'Email address changed after code was sent. Please request a new confirmation code.');
+    IF v_has_new_pwd THEN
+      v_new_salt := PKG_CRYPTO.generate_salt();
+      v_new_hash := PKG_CRYPTO.hash_password(p_new_password, v_new_salt, 600000);
+
+      UPDATE auth_identities
+         SET password_hash = v_new_hash,
+             password_salt = v_new_salt,
+             password_iters = 600000,
+             password_must_change = 'N',
+             failed_attempts = 0,
+             locked_until = NULL,
+             updated_at = SYSTIMESTAMP
+       WHERE user_id = v_user_id AND provider = 'PASSWORD';
     END IF;
 
-    -- Verify the 6-digit code on the server FIRST before updating users or auth_identities!
-    -- If invalid or expired, PKG_AUTH.verify_email increments attempts and raises -20013.
-    PKG_AUTH.verify_email(v_user_id, TRIM(p_code));
-
-    UPDATE email_outbox
-       SET row_version = 2,
-           updated_at  = SYSTIMESTAMP
-     WHERE template IN ('VERIFY_EMAIL', 'ADMIN_SETUP_VERIFY')
-       AND row_version = 1
-       AND JSON_VALUE(payload, '$.user_id') = v_user_id;
-
-    -- Hash new password with fresh salt
-    v_new_salt := PKG_CRYPTO.generate_salt();
-    v_new_hash := PKG_CRYPTO.hash_password(p_new_password, v_new_salt, 600000);
-
-    UPDATE auth_identities
-       SET password_hash = v_new_hash,
-           password_salt = v_new_salt,
-           password_iters = 600000,
-           password_must_change = 'N',
-           failed_attempts = 0,
-           locked_until = NULL,
-           updated_at = SYSTIMESTAMP
-     WHERE user_id = v_user_id AND provider = 'PASSWORD';
-
-    -- Switch to the admin's verified email, optional full_name/phone, and ensure ADMIN accounts stay APPROVED
     UPDATE users
        SET email = v_new_email,
            full_name = NVL(INITCAP(NULLIF(TRIM(p_full_name), '')), full_name),
            phone = CASE WHEN TRIM(p_phone) IS NOT NULL THEN SUBSTR(TRIM(p_phone), 1, 40) ELSE phone END,
-           email_verified_at = SYSTIMESTAMP,
+           email_verified_at = NVL(email_verified_at, SYSTIMESTAMP),
            status = CASE WHEN EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = users.id AND ur.role_code = 'ADMIN')
                          THEN 'APPROVED' ELSE status END,
            updated_at = SYSTIMESTAMP
      WHERE id = v_user_id;
 
-    INSERT INTO audit_events (actor_user_id, action, target_type, target_id, reason)
-    VALUES (v_user_id, 'EMAIL_CHANGED', 'USER', v_user_id, 'Email changed during security setup');
+    IF v_email_changed THEN
+      INSERT INTO audit_events (actor_user_id, action, target_type, target_id, reason)
+      VALUES (v_user_id, 'EMAIL_CHANGED', 'USER', v_user_id, 'Email updated and verified by user');
+    END IF;
 
-    -- Security: increment user's permission_version to invalidate any stale sessions on other devices
-    UPDATE users
-       SET permission_version = permission_version + 1,
-           updated_at = SYSTIMESTAMP
-     WHERE id = v_user_id;
-
-    INSERT INTO audit_events (actor_user_id, action, target_type, target_id, reason)
-    VALUES (v_user_id, 'PASSWORD_CHANGED', 'USER', v_user_id, 'Password updated by user');
+    IF v_has_new_pwd THEN
+      INSERT INTO audit_events (actor_user_id, action, target_type, target_id, reason)
+      VALUES (v_user_id, 'PASSWORD_CHANGED', 'USER', v_user_id, 'Password updated by user');
+    END IF;
 
     p_body := ok_body;
     p_status := 200;

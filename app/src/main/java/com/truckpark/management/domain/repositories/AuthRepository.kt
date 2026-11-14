@@ -26,6 +26,13 @@ interface AuthRepository {
     ): AuthResult<Unit>
     suspend fun sendVerificationCode(email: String? = null): AuthResult<Unit>
     suspend fun changePassword(newEmail: String, newPassword: String): AuthResult<Unit>
+    suspend fun updateUserProfile(
+        newEmail: String,
+        fullName: String,
+        phone: String,
+        newPassword: String? = null,
+        code: String? = null,
+    ): AuthResult<AuthUser>
     suspend fun requestSignUpVerification(
         fullName: String,
         email: String,

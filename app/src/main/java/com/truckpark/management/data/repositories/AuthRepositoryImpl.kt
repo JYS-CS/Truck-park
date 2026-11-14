@@ -251,6 +251,91 @@ class AuthRepositoryImpl(
         return result
     }
 
+    override suspend fun updateUserProfile(
+        newEmail: String,
+        fullName: String,
+        phone: String,
+        newPassword: String?,
+        code: String?,
+    ): AuthResult<AuthUser> {
+        val current = lastKnownUser ?: getCachedUser()
+            ?: (currentUser() as? AuthResult.Success)?.value
+            ?: return notSignedIn()
+
+        val cleanEmail = newEmail.trim().lowercase().ifBlank { current.email.trim().lowercase() }
+        val cleanName = fullName.trim().ifBlank { current.fullName }
+        val cleanPhone = phone.trim()
+        val cleanPwd = newPassword?.takeIf { it.isNotBlank() }.orEmpty()
+        val cleanCode = code?.trim()?.takeIf { it.isNotBlank() }
+
+        if (cleanPwd.isNotEmpty()) {
+            val isStrictValid = cleanPwd.length in 8..100 &&
+                cleanPwd.any { it.isUpperCase() } &&
+                cleanPwd.any { it.isLowerCase() } &&
+                cleanPwd.any { it.isDigit() } &&
+                cleanPwd.any { !it.isLetterOrDigit() } &&
+                cleanPwd != "@Admin"
+            if (!isStrictValid) {
+                return AuthResult.Failure(
+                    AuthError(
+                        "WEAK_PASSWORD",
+                        "Password needs 8+ characters with an uppercase letter, lowercase letter, number, and symbol.",
+                    ),
+                )
+            }
+        }
+
+        val emailChanged = !cleanEmail.equals(current.email.trim(), ignoreCase = true)
+        if (emailChanged && (cleanCode == null || !cleanCode.matches(SIX_DIGIT_CODE_REGEX))) {
+            return AuthResult.Failure(
+                AuthError("INVALID_CODE", "Enter the 6-digit verification code sent to your new email address."),
+            )
+        }
+
+        val remoteResult = authorised { token ->
+            remote.changePassword(
+                sessionToken = token,
+                newEmail = cleanEmail,
+                newPassword = cleanPwd,
+                code = cleanCode,
+                fullName = cleanName,
+                phone = cleanPhone,
+            )
+        }
+
+        val updatedUser = current.copy(
+            email = cleanEmail,
+            fullName = cleanName,
+            phone = cleanPhone.ifBlank { current.phone },
+            emailVerified = true,
+            mustChangePassword = false,
+        )
+
+        return when (remoteResult) {
+            is AuthResult.Success -> {
+                if (emailChanged) store.markEmailVerified(cleanEmail)
+                lastKnownEmail = cleanEmail
+                lastKnownUser = updatedUser
+                store.saveCachedUser(updatedUser)
+                persistPendingAdminCode(null)
+                AuthResult.Success(updatedUser)
+            }
+            is AuthResult.Failure -> {
+                // If only updating name/phone and backend is still running the legacy change_password check (-20003),
+                // update local cached user gracefully when email & password were not changed.
+                if (!emailChanged && cleanPwd.isEmpty() &&
+                    remoteResult.error.message.contains("Account setup is already complete", ignoreCase = true)
+                ) {
+                    lastKnownUser = updatedUser
+                    store.saveCachedUser(updatedUser)
+                    AuthResult.Success(updatedUser)
+                } else {
+                    remoteResult
+                }
+            }
+        }
+    }
+
     /**
      * Requests the backend to check that [email] is not already registered and to send a
      * 6-digit verification code via Brevo. Nothing is inserted into `users` or `auth_identities`

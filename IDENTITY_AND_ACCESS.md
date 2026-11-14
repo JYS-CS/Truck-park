@@ -86,7 +86,7 @@ The platform supports both **Self-Service Registration** (with pre-registration 
 - **Role Updates (`GET /admin/users` & `POST /admin/users/{id}/approve`)**:
   - Administrators see all registered staff on the Admin Home tab and can switch any user's role between `RUNNER`, `SUPERVISOR`, and `ADMIN`.
   - Role changes increment `users.permission_version`, write an immutable record to `audit_events`, and send a role-update notification email via Brevo.
-  - Staff can tap **Sync Role & Permissions** in the top-right menu (or re-open the app) to immediately adapt their bottom navigation tabs and workspace cards to their new role.
+  - Staff can tap the **Sync Role** icon or open **View / Update Profile & Info** in the top-right menu to sync their role or update their full name, phone, password, and email address (using dual 6-digit OTP verification on both the old and new email addresses).
 - **Admin Invitations (`POST /admin/invites` → `POST /auth/accept-invite`)**:
   - Administrators can also pre-invite an email with a proposed role (`RUNNER`, `SUPERVISOR`, `ADMIN`) using a 72-hour single-use token hashed with SHA-256 in `invites`.
 

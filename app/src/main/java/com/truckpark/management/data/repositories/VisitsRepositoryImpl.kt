@@ -939,6 +939,14 @@ private fun RemoteVisit.toEntity(existing: TruckVisitEntity?): TruckVisitEntity 
     val existingSeals = existing?.let { decodeSealsJson(it.sealsJson) }.orEmpty()
     val mergedSeals = mergeSealPhotoPaths(seals, existingSeals)
 
+    val remoteArrivedMs = arrivedAt.toEpochMilli()
+    val remoteDepartedMs = departedAt?.toEpochMilli()
+    val effectiveDepartedMs = when {
+        remoteDepartedMs != null && remoteDepartedMs > remoteArrivedMs -> remoteDepartedMs
+        existing?.departedAt != null && existing.departedAt > remoteArrivedMs -> existing.departedAt
+        else -> remoteDepartedMs ?: existing?.departedAt
+    }
+
     return TruckVisitEntity(
         id = id,
         reference = reference,
@@ -948,8 +956,8 @@ private fun RemoteVisit.toEntity(existing: TruckVisitEntity?): TruckVisitEntity 
         driverName = driverName,
         driverPhone = driverPhone,
         arrivalNotes = enhancedNotes,
-        arrivedAt = arrivedAt.toEpochMilli(),
-        departedAt = departedAt?.toEpochMilli(),
+        arrivedAt = remoteArrivedMs,
+        departedAt = effectiveDepartedMs,
         departureNotes = departureNotes,
         allowDuplicate = existing?.allowDuplicate ?: false,
         syncState = SyncStateCodes.SYNCED,

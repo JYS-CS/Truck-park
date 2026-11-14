@@ -57,8 +57,8 @@ android {
         applicationId = "com.truckpark.management"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0-m1"
+        versionCode = 5
+        versionName = "1.5.0-m5"
 
         buildConfigField("String", "ORDS_BASE_URL", "\"$ordsBaseUrl\"")
         buildConfigField("String", "ORDS_MODULE_PATH", "\"$ordsModulePath\"")

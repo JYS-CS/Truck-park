@@ -21,7 +21,7 @@ BEGIN
                     principal_name => SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA'),
                     principal_type => xs_acl.ptype_db));
 
-  -- 3. Grant RESOLVE & CONNECT for HTTPS api.brevo.com (port 443)
+  -- 3. Grant RESOLVE and CONNECT for HTTPS api.brevo.com (port 443)
   DBMS_NETWORK_ACL_ADMIN.APPEND_HOST_ACE(
     host       => 'api.brevo.com',
     lower_port => NULL,

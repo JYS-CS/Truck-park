@@ -1,21 +1,24 @@
 # Remaining Work
 
-This file lists what has been completed and what the app still needs, based on the master development prompt. **Milestone 1 (Foundation)** and **Milestone 2 (Authentication, Verification, Roles & Admin Access Control)** are built.
+This file lists what has been completed and what the app still needs, based on the master development prompt. **Milestones 1–5 (Foundation, Authentication & RBAC, SADC Truck Visits & OCR, Offline Room Sync & Conflict Resolution, and Cargo/Seals/Corrections)** are built (`v1.5.0-m5`).
 
 ## Where we are
 
 | Area | Status |
 |---|---|
-| Project setup, theme (Light / Dark / System), navigation shell | Done |
-| Hibiscus branding, splash, app icon | Done |
-| Oracle ADB + ORDS backend (`PKG_CRYPTO`, `PKG_AUTHZ`, `PKG_AUTH`, `PKG_ADMIN`, `PKG_API`) | Done |
-| Server-side 6-digit email verification & Brevo transactional emails (`UTL_SMTP` / `UTL_HTTP`) | Done |
-| Pre-verification account hygiene (no `users` / `auth_identities` rows until OTP is verified) | Done |
-| Bootstrap Admin Security Setup gate (`admin@hibiscuss.com` / `must_change_password`) | Done |
-| Self-registration auto-approval as `RUNNER` + immediate sign-in | Done |
-| Live Admin Staff Role Management (`RUNNER`, `SUPERVISOR`, `ADMIN`) & Role-Adaptive UI | Done |
-| Keystore-encrypted session storage, Sign Out, and live role sync | Done |
-| Truck visits, registers, local Room sync, attendance, alerts, PDF reports (Milestones 3–12) | Not started |
+| Project setup, theme (Light / Dark / System), navigation shell (M1) | Done |
+| Hibiscus branding, splash, app icon (M1) | Done |
+| Oracle ADB + ORDS backend (`PKG_CRYPTO`, `PKG_AUTHZ`, `PKG_AUTH`, `PKG_ADMIN`, `PKG_API`) (M2–M5) | Done |
+| Server-side 6-digit email verification & Brevo transactional emails (`UTL_SMTP` / `UTL_HTTP`) (M2) | Done |
+| Pre-verification account hygiene (no `users` / `auth_identities` rows until OTP is verified) (M2) | Done |
+| Bootstrap Admin Security Setup gate & Self-Service Profile / Dual-OTP Email Update (M2) | Done |
+| Self-registration auto-approval as `RUNNER` + immediate sign-in (M2) | Done |
+| Live Admin Staff Role, Handset & Granular Permission Override Management (M2) | Done |
+| Keystore-encrypted session storage, Sign Out, and live role sync (M2) | Done |
+| SADC Truck Visits, Dual Front/Horse Plates, Bidirectional Auto-Refill & CameraX + ML Kit OCR (Live Scan & Photo Capture) (M3) | Done |
+| Local Room Database, Offline Sync Queue, Pull-to-Refresh & Server/Device Conflict Resolution (M4) | Done |
+| Driver Contact, Cargo Manifests, Arrival/Exit Seal Verification, Photo Evidence & Audit History (M5) | Done |
+| Visitors, incidents, inspections, attendance, shifts, alerts, PDF reports (Milestones 6–12) | Planned |
 
 ## Decisions resolved vs. still open
 
@@ -39,28 +42,24 @@ This file lists what has been completed and what the app still needs, based on t
   - Maximum handset allocation policy (strict limit of max 2 active handsets per staff member) enforced on the server in `PKG_AUTH.login`.
   - Per-user granular permission exceptions (`GRANT` / `REMOVE` overrides with business reason and optional expiry) backed by `user_permission_exceptions` table, ORDS endpoints, and interactive UI in the Admin Governance panel.
 
-### 3. Truck visits and vehicles
-- Visit types: Quick, Overnight, Transit, Loading or unloading, Other.
-- Arrival: search or create a vehicle, record details, generate a unique visit reference, save locally.
-- Warn on an existing open visit for the same truck. Re-check on the server during sync.
-- Departure: record the departure time, notes, and mark the visit complete.
-- Corrections: Runners may fix their own arrival details before departure. After departure, critical fields need a Supervisor or Admin and a recorded reason. Keep original values and full history.
-- Never invent or silently overwrite timestamps.
+### 3. Truck visits and vehicles (Completed)
+- **Built:**
+  - Visit types: Quick, Overnight, Transit, Loading or unloading, Other (with custom purpose reason).
+  - Full-page Arrival Check-In & Departure Check-Out screens with SADC country dropdown selector, Front Plate & Horse Plate with bidirectional auto-refill, and CameraX + ML Kit OCR (both Live Scan and Background Photo Capture).
+  - Duplicate open-visit detection locally and during server sync (`OPEN_VISIT_EXISTS`), plus `Checked In By` and `Exited / Checked Out By` staff attribution.
+  - Role-gated post-arrival and post-departure corrections with mandatory business reason and full immutable audit history (`visit_corrections`).
 
-### 4. Local database and sync protocol
-- Room as the local database. The UI reads only local data.
-- Device-generated unique IDs for every record.
-- Sync queue: save locally, queue the operation, show pending status, sync when online, validate on the server, process idempotently, confirm, update status.
-- Sync order: visits and departures, visitors, incidents, other records, then photos and large files.
-- Conflicts: merge non-overlapping field edits; flag clashing edits; never silently overwrite truck identity, timestamps or visit status; keep both versions; Supervisor or Admin resolves; audit the resolution.
-- Show pending, syncing, synced, conflicted and failed states, plus last successful sync time.
-- Reports warn when data from other devices may be missing.
+### 4. Local database and sync protocol (Completed)
+- **Built:**
+  - Room local database (`TruckParkDatabase` v2) storing visits, cargo items, seals, custom fields, correction history, and ordered sync queue operations.
+  - Sticky On Yard / Departed switch & search bar with pull-to-refresh and background sync.
+  - Conflict detection (`409 CONFLICT`) and in-app resolution (`Keep Device` vs `Use Server`) for Supervisors and Admins.
 
-### 5. Driver, cargo and seal registers
-- Reusable driver profiles with quick entry. Driver details optional.
-- Quick cargo description on a visit, plus optional structured cargo records.
-- Seals: numbers, types, condition, multiple per visit, photos for damage or loss.
-- Operational only. No cargo value, charges or payments.
+### 5. Driver, cargo and seal registers (Completed)
+- **Built:**
+  - International driver contact entry with country dial-code picker, collapsible optional cards on arrival, and reusable transporter/carrier autocomplete store.
+  - Quick cargo summary plus structured multi-item cargo manifest (`CargoItem`) and custom per-category columns.
+  - Arrival & Departure seal verification (`VisitSeal`) with seal numbers, types, conditions (`Intact`, `Broken`, `Tampered`, `Missing`), Camera/Gallery photo attachments, and OCR seal scanning/photo extraction.
 
 ### 6. Visitors, incidents and inspections
 - Visitor register: name, purpose, arrival and departure times, badge reference, host, vehicle, optional contact, notes and photos. Works offline.

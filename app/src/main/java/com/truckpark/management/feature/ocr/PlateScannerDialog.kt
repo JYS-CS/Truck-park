@@ -2,6 +2,7 @@ package com.truckpark.management.feature.ocr
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
 import android.util.Size
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -36,6 +37,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FlashlightOff
 import androidx.compose.material.icons.filled.FlashlightOn
 import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -110,6 +112,7 @@ fun PlateScannerDialog(
 
     var isTorchEnabled by remember { mutableStateOf(false) }
     var cameraControl by remember { mutableStateOf<androidx.camera.core.CameraControl?>(null) }
+    var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
     var detectedPlateResult by remember { mutableStateOf<OcrScanResult?>(null) }
     var isAnalyzing by remember { mutableStateOf(true) }
 
@@ -128,6 +131,31 @@ fun PlateScannerDialog(
         )
     }
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
+
+    val galleryPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            val bitmap = try {
+                context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
+            } catch (_: Exception) {
+                null
+            }
+            if (bitmap != null) {
+                onDismiss()
+                PlateTextAnalyzer.extractFromBitmap(
+                    bitmap = bitmap,
+                    scanMode = scanMode,
+                    knownTransporters = knownTransporters,
+                    cropRegion = null,
+                ) { res ->
+                    if (res != null) {
+                        onPlateScanned(res.plateNumber, res.matchedCarrier)
+                    }
+                }
+            }
+        }
+    }
 
     val analyzer = remember(scanMode) {
         PlateTextAnalyzer(
@@ -185,6 +213,7 @@ fun PlateScannerDialog(
                             implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                             scaleType = PreviewView.ScaleType.FILL_CENTER
                         }
+                        previewViewRef = previewView
 
                         val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
                         cameraProviderFuture.addListener({
@@ -484,13 +513,101 @@ fun PlateScannerDialog(
                                 text = if (scanMode == OcrScanMode.TRANSPORTER) {
                                     "Tap or drag to place the box on the transporter name"
                                 } else {
-                                    "Tap or drag to place the box exactly on the plate"
+                                    "Tap or drag to place the box on the plate, or capture a photo"
                                 },
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     color = Color.White.copy(alpha = 0.6f),
                                     textAlign = TextAlign.Center
                                 )
                             )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                // Instant Capture Photo & Background ML Kit Extraction Button
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(CapsuleShape)
+                                        .background(
+                                            Brush.linearGradient(
+                                                listOf(Color(0xFF6366F1), Color(0xFF38BDF8))
+                                            )
+                                        )
+                                        .clickable {
+                                            val captured = previewViewRef?.bitmap
+                                            if (captured != null) {
+                                                val regionSnapshot = cropRegion
+                                                onDismiss()
+                                                PlateTextAnalyzer.extractFromBitmap(
+                                                    bitmap = captured,
+                                                    scanMode = scanMode,
+                                                    knownTransporters = knownTransporters,
+                                                    cropRegion = regionSnapshot,
+                                                ) { res ->
+                                                    if (res != null) {
+                                                        onPlateScanned(res.plateNumber, res.matchedCarrier)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        .padding(vertical = 12.dp, horizontal = 14.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.PhotoCamera,
+                                            contentDescription = "Capture Photo",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                        Text(
+                                            text = "Capture & Auto-Extract",
+                                            style = MaterialTheme.typography.labelMedium.copy(
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = Color.White,
+                                            ),
+                                        )
+                                    }
+                                }
+
+                                // Pick Photo from Gallery for Background ML Kit Extraction
+                                Box(
+                                    modifier = Modifier
+                                        .clip(CapsuleShape)
+                                        .background(Color.White.copy(alpha = 0.14f))
+                                        .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.22f)), CapsuleShape)
+                                        .clickable {
+                                            galleryPickerLauncher.launch("image/*")
+                                        }
+                                        .padding(vertical = 12.dp, horizontal = 14.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.PhotoLibrary,
+                                            contentDescription = "Pick Photo",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(15.dp),
+                                        )
+                                        Text(
+                                            text = "Photo",
+                                            style = MaterialTheme.typography.labelMedium.copy(
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color.White,
+                                            ),
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }

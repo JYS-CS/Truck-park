@@ -71,6 +71,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.truckpark.management.R
 import com.truckpark.management.core.common.AuthResult
 import com.truckpark.management.core.designsystem.components.GlassCard
@@ -82,6 +84,8 @@ import com.truckpark.management.domain.models.AuthUser
 import com.truckpark.management.domain.models.ManagedDevice
 import com.truckpark.management.domain.models.ManagedUser
 import com.truckpark.management.feature.auth.AuthViewModel
+import com.truckpark.management.feature.visits.VisitsUiState
+import com.truckpark.management.feature.visits.VisitsViewModel
 import java.time.Duration
 import java.time.Instant
 import java.time.OffsetDateTime
@@ -99,7 +103,9 @@ fun OperationsScreen(
     icon: ImageVector = TruckParkIcons.Neutral,
     user: AuthUser? = null,
     authViewModel: AuthViewModel? = null,
+    visitsViewModel: VisitsViewModel? = null,
     isHomeTab: Boolean = false,
+    onNavigateToVisits: () -> Unit = {},
     onMenuClick: (() -> Unit)? = null,
 ) {
     Box(
@@ -166,69 +172,100 @@ fun OperationsScreen(
             }
 
             if (user != null && user.isAdmin && isHomeTab && authViewModel != null) {
+                val resolvedVisitsVm = visitsViewModel ?: viewModel(factory = VisitsViewModel.Factory)
+                val visitsState by resolvedVisitsVm.uiState.collectAsStateWithLifecycle()
+                var dashboardUsers by remember { mutableStateOf<List<ManagedUser>>(emptyList()) }
+                var dashboardDevices by remember { mutableStateOf<List<ManagedDevice>>(emptyList()) }
+
+                LaunchedEffect(Unit) {
+                    authViewModel.loadManagedUsers { res ->
+                        if (res is AuthResult.Success) dashboardUsers = res.value
+                    }
+                    authViewModel.loadManagedDevices { res ->
+                        if (res is AuthResult.Success) dashboardDevices = res.value
+                    }
+                }
+
+                AdminLiveOperationsDashboard(
+                    currentUser = user,
+                    visitsState = visitsState,
+                    users = dashboardUsers,
+                    devices = dashboardDevices,
+                    onNavigateToVisits = onNavigateToVisits,
+                    onRefreshDashboard = {
+                        resolvedVisitsVm.syncAndRefresh(silent = true)
+                        authViewModel.loadManagedUsers { res ->
+                            if (res is AuthResult.Success) dashboardUsers = res.value
+                        }
+                        authViewModel.loadManagedDevices { res ->
+                            if (res is AuthResult.Success) dashboardDevices = res.value
+                        }
+                    },
+                )
+
                 AdminManagementPanel(
                     currentUser = user,
                     authViewModel = authViewModel,
                 )
-            }
-
-            // Planned feature placeholder card
-            GlassCard(Modifier.fillMaxWidth(), contentPadding = 24) {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(52.dp)
-                            .background(
-                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                shape = CircleShape,
-                            ),
-                        contentAlignment = Alignment.Center,
+            } else {
+                // Planned feature placeholder card (for Registers / Reports / non-Admin Home)
+                GlassCard(Modifier.fillMaxWidth(), contentPadding = 24) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        Icon(
-                            imageVector = icon,
-                            contentDescription = null,
-                            modifier = Modifier.size(26.dp),
-                            tint = MaterialTheme.colorScheme.primary,
-                        )
-                    }
-
-                    Spacer(Modifier.height(14.dp))
-
-                    Text(
-                        text = stringResource(R.string.status_not_implemented),
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                        color = MaterialTheme.colorScheme.onSurface,
-                        textAlign = TextAlign.Center,
-                    )
-
-                    Spacer(Modifier.height(6.dp))
-
-                    Text(
-                        text = summary,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(horizontal = 8.dp),
-                    )
-
-                    Spacer(Modifier.height(14.dp))
-
-                    Box(
-                        modifier = Modifier
-                            .background(
-                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                                shape = CircleShape,
+                        Box(
+                            modifier = Modifier
+                                .size(52.dp)
+                                .background(
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                    shape = CircleShape,
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = icon,
+                                contentDescription = null,
+                                modifier = Modifier.size(26.dp),
+                                tint = MaterialTheme.colorScheme.primary,
                             )
-                            .padding(horizontal = 14.dp, vertical = 6.dp),
-                    ) {
+                        }
+
+                        Spacer(Modifier.height(14.dp))
+
                         Text(
-                            text = stringResource(R.string.planned_in_milestone, milestone),
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
-                            color = MaterialTheme.colorScheme.primary,
+                            text = stringResource(R.string.status_not_implemented),
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            textAlign = TextAlign.Center,
                         )
+
+                        Spacer(Modifier.height(6.dp))
+
+                        Text(
+                            text = summary,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 8.dp),
+                        )
+
+                        Spacer(Modifier.height(14.dp))
+
+                        Box(
+                            modifier = Modifier
+                                .background(
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                    shape = CircleShape,
+                                )
+                                .padding(horizontal = 14.dp, vertical = 6.dp),
+                        ) {
+                            Text(
+                                text = stringResource(R.string.planned_in_milestone, milestone),
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
                     }
                 }
             }

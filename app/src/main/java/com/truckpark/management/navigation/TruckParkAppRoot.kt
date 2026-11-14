@@ -25,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -39,6 +40,7 @@ import com.truckpark.management.feature.auth.AuthViewModel
 import com.truckpark.management.feature.operations.OperationsScreen
 import com.truckpark.management.feature.settings.MoreOptionsBottomSheet
 import com.truckpark.management.feature.visits.VisitsScreen
+import com.truckpark.management.feature.visits.VisitsViewModel
 
 /**
  * Root container with floating iOS-style liquid glass navigation bar
@@ -55,6 +57,7 @@ fun TruckParkAppRoot(
     onSignOut: () -> Unit = {},
 ) {
     val navController = rememberNavController()
+    val visitsViewModel: VisitsViewModel = viewModel(factory = VisitsViewModel.Factory)
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = backStackEntry?.destination
     var selectedRoute by remember { mutableStateOf(TopLevelDestination.Home.route) }
@@ -118,7 +121,16 @@ fun TruckParkAppRoot(
                             icon = TopLevelDestination.Home.icon,
                             user = user,
                             authViewModel = authViewModel,
+                            visitsViewModel = visitsViewModel,
                             isHomeTab = true,
+                            onNavigateToVisits = {
+                                selectedRoute = TopLevelDestination.Visits.route
+                                navController.navigate(TopLevelDestination.Visits.route) {
+                                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            },
                             onMenuClick = { moreSheetOpen = true },
                         )
                     }
@@ -127,6 +139,7 @@ fun TruckParkAppRoot(
                             user = user,
                             onMenuClick = { moreSheetOpen = true },
                             onToggleBottomNav = { showBottomNavByScreen = it },
+                            viewModel = visitsViewModel,
                         )
                     }
                     composable(TopLevelDestination.Registers.route) {
@@ -182,6 +195,7 @@ fun TruckParkAppRoot(
                 themeMode = themeMode,
                 onThemeModeSelected = onThemeModeSelected,
                 user = user,
+                authViewModel = authViewModel,
                 onRefreshRole = {
                     authViewModel?.checkCurrentSession()
                 },

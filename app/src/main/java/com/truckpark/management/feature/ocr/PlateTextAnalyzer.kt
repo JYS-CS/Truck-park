@@ -584,4 +584,96 @@ class PlateTextAnalyzer(
             consecutiveCount = (consecutiveCount - 1).coerceAtLeast(0)
         }
     }
+
+    companion object {
+        /**
+         * Runs ML Kit TextRecognition in the background on a captured photo [bitmap].
+         * If [cropRegion] is provided, tries the cropped region first and falls back to the full image.
+         */
+        fun extractFromBitmap(
+            bitmap: Bitmap,
+            scanMode: OcrScanMode,
+            knownTransporters: Set<String> = emptySet(),
+            cropRegion: NormalizedRect? = null,
+            onResult: (OcrScanResult?) -> Unit,
+        ) {
+            val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+            val helper = PlateTextAnalyzer(
+                scanMode = scanMode,
+                knownTransporters = knownTransporters,
+                requiredConsecutiveFrames = 1,
+                onPlateConfirmed = {},
+            )
+
+            fun parseVisionText(visionText: Text): OcrScanResult? {
+                val allDetected = visionText.textBlocks
+                    .joinToString(" ") { it.text.trim() }
+                    .replace(Regex("""\s+"""), " ")
+                    .trim()
+                val foundCarrier = knownTransporters.firstOrNull { carrier ->
+                    allDetected.contains(carrier, ignoreCase = true)
+                }
+                val extracted = when (scanMode) {
+                    OcrScanMode.TRANSPORTER -> helper.extractAllTransporterText(visionText)
+                    OcrScanMode.PLATE -> helper.bestPlateIn(visionText) ?: run {
+                        // Fallback for single-shot photo capture: pick the best alphanumeric token
+                        val rawToken = visionText.textBlocks
+                            .flatMap { it.lines }
+                            .map { it.text.uppercase().filter { c -> c.isLetterOrDigit() } }
+                            .filter { it.length in 4..12 && it.any { c -> c.isDigit() } }
+                            .maxByOrNull { it.length }
+                        rawToken?.let { PlateOcrNormalizer.normalizeCandidate(it) }
+                    }
+                }
+                return if (!extracted.isNullOrBlank()) {
+                    OcrScanResult(
+                        plateNumber = extracted,
+                        matchedCarrier = foundCarrier,
+                        rawText = allDetected,
+                    )
+                } else null
+            }
+
+            val croppedBitmap = if (cropRegion != null && bitmap.width > 10 && bitmap.height > 10) {
+                try {
+                    val left = (cropRegion.left * bitmap.width).toInt().coerceIn(0, bitmap.width - 1)
+                    val top = (cropRegion.top * bitmap.height).toInt().coerceIn(0, bitmap.height - 1)
+                    val right = (cropRegion.right * bitmap.width).toInt().coerceIn(left + 1, bitmap.width)
+                    val bottom = (cropRegion.bottom * bitmap.height).toInt().coerceIn(top + 1, bitmap.height)
+                    Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
+                } catch (_: Exception) {
+                    null
+                }
+            } else null
+
+            if (croppedBitmap != null) {
+                recognizer.process(InputImage.fromBitmap(croppedBitmap, 0))
+                    .addOnSuccessListener { croppedText ->
+                        val res = parseVisionText(croppedText)
+                        if (res != null) {
+                            onResult(res)
+                        } else {
+                            recognizer.process(InputImage.fromBitmap(bitmap, 0))
+                                .addOnSuccessListener { fullText ->
+                                    onResult(parseVisionText(fullText))
+                                }
+                                .addOnFailureListener { onResult(null) }
+                        }
+                    }
+                    .addOnFailureListener {
+                        recognizer.process(InputImage.fromBitmap(bitmap, 0))
+                            .addOnSuccessListener { fullText ->
+                                onResult(parseVisionText(fullText))
+                            }
+                            .addOnFailureListener { onResult(null) }
+                    }
+            } else {
+                recognizer.process(InputImage.fromBitmap(bitmap, 0))
+                    .addOnSuccessListener { fullText ->
+                        onResult(parseVisionText(fullText))
+                    }
+                    .addOnFailureListener { onResult(null) }
+            }
+        }
+    }
 }

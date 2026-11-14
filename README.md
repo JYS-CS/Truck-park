@@ -1,29 +1,42 @@
-# Hibiscus: Truck Park Management (Android)
+# Hibiscus: Truck Park Management (Android) — v1.5.0 (Milestone 5)
 
-Jetpack Compose + Material 3 app for truck park operations, backed by **Oracle Autonomous Database (ADB)** and **Oracle REST Data Services (ORDS)**.
+Jetpack Compose + Material 3 app for SADC truck park and gate operations, backed by **Oracle Autonomous Database (ADB)** and **Oracle REST Data Services (ORDS)**.
 
-The project has completed **Milestone 1 (Foundation)** and **Milestone 2 (Identity, Access Management & Role-Based Workspaces)**:
-- Liquid-metal authentication UI (Sign In, Create Account, Forgot Password reset flow, 6-Digit Email Verification, and Admin Security Setup gate).
-- Server-side email availability check, OTP code generation, and Brevo transactional email delivery inside Oracle PL/SQL (`PKG_API`).
-- Zero unverified persistence: new accounts and Admin credential updates are written to `users` and `auth_identities` **only after** the 6-digit verification code is confirmed.
-- Auto-approval as `RUNNER` on self-registration with immediate sign-in, plus live Admin role management (`RUNNER`, `SUPERVISOR`, `ADMIN`) and role-adaptive navigation & workspaces.
+The project has completed **Milestones 1–5**:
+- **Milestone 1 (Foundation)**: Navigation shell, Light/Dark/System DataStore theme engine, liquid glass design system, animated splash screen.
+- **Milestone 2 (Identity, Access Management & Role-Based Workspaces)**:
+  - Liquid-metal authentication UI (Sign In, Create Account, Forgot Password reset flow, 6-Digit Email Verification, Admin Security Setup gate, and Profile & Email Update with dual 6-digit OTP verification).
+  - Server-side email availability check, OTP code generation, and Brevo transactional email delivery inside Oracle PL/SQL (`PKG_API`).
+  - Zero unverified persistence: new accounts and credential updates are written to `users` and `auth_identities` **only after** the 6-digit verification code is confirmed.
+  - Auto-approval as `RUNNER` on self-registration with immediate sign-in, plus live Admin role management (`RUNNER`, `SUPERVISOR`, `ADMIN`), handset management (max 2 active handsets), and granular per-user permission overrides.
+- **Milestone 3 (Truck Visits & SADC Gate Operations)**:
+  - Full-page **Arrival Check-In** and **Departure Check-Out / Visit Details** flows with collapsible optional sections, SADC country dropdown selector, and bidirectional auto-refill between Front Plate and Horse Plate.
+  - Duplicate open-visit detection (both locally and on the server during sync) and staff attribution (`Checked In By` on arrival details, `Exited / Checked Out By` on departure).
+  - CameraX + Google ML Kit OCR for **Live Scanning** and **Background Photo Capture Extraction** across Front Plate, Horse Plate, Transporter/Carrier, and Container/Trailer Seals.
+- **Milestone 4 (Offline-First Local Room Database & Cloud Sync Protocol)**:
+  - Room local persistence (`visits`, `visit_corrections`, `sync_queue`) with pull-to-refresh, sticky On Yard / Departed switch & search bar, background auto-sync, and conflict resolution UI (`Keep Device` vs `Use Server`).
+- **Milestone 5 (Driver, Cargo, Seal Verification & Audit History)**:
+  - International driver contact entry with country dial codes, structured cargo manifest items, arrival & exit seal verification with photo attachments, custom per-category columns, and immutable post-arrival/post-departure correction history.
 
 ## Status
 
 | Item | Status |
 |---|---|
+| Version | `1.5.0-m5` (`versionCode = 5`) |
 | Builds (`testDebugUnitTest`) | Working |
-| Unit tests | `ThemeModeTest`, `EmailValidationTest`, `AuthRepositoryImplTest`, `OrdsAuthRemoteDataSourceTest` |
 | Light / Dark / System theme, saved on device | Implemented (DataStore) |
-| Role-adaptive floating glass bottom bar | Implemented (`RUNNER`: 3 tabs; `SUPERVISOR` & `ADMIN`: 4 tabs) |
-| Top-right menu with account card, role sync, theme picker & Sign Out | Implemented (bottom sheet) |
+| Role-adaptive floating glass bottom bar | Implemented (`RUNNER`, `SUPERVISOR`, `ADMIN`) |
+| Top-right menu with Profile & Dual-OTP Email Update, Role Sync, Theme Picker & Sign Out | Implemented (bottom sheet) |
 | Animated splash screen & launcher icons | Implemented (all densities) |
 | Oracle ADB + ORDS Authentication & RBAC (`PKG_API`, `PKG_AUTH`, `PKG_AUTHZ`, `PKG_ADMIN`) | Implemented |
 | Server-side Brevo OTP & transactional email dispatch (`UTL_SMTP` / `UTL_HTTP`) | Implemented |
 | Admin Security Setup gate (`must_change_password` / `admin@hibiscuss.com`) | Implemented |
-| Auto-approval as `RUNNER` + Admin Staff Role Management (`RUNNER` / `SUPERVISOR` / `ADMIN`) | Implemented |
+| Auto-approval as `RUNNER` + Admin Staff Role, Handset & Permission Override Governance | Implemented |
 | Keystore-encrypted session storage (`SessionStore`) & automatic token refresh | Implemented |
-| Visits, Registers, Local Room Sync & PDF Reports (Milestones 3–12) | Planned |
+| SADC Truck Visits, Dual Plates, CameraX + ML Kit Live Scan & Photo Capture OCR (M3) | Implemented |
+| Offline-First Room Database, Sync Queue, Pull-to-Refresh & Conflict Resolution (M4) | Implemented |
+| Cargo Manifests, Seal Verification, Photo Evidence & Correction Audit Trail (M5) | Implemented |
+| Visitors, Incidents, Inspections, Attendance, Shifts, Alerts & PDF Reports (Milestones 6–12) | Planned |
 
 ## Architecture
 
@@ -31,28 +44,31 @@ The project has completed **Milestone 1 (Foundation)** and **Milestone 2 (Identi
 app/src/main/java/com/truckpark/management/
 ├── app/                      MainActivity, TruckParkApplication (manual AppContainer)
 ├── core/
-│   ├── common/               AppConfig, AppResult, AppError, ThemeMode, EmailValidation
+│   ├── common/               AppConfig, AuthResult, ThemeMode
 │   └── designsystem/
-│       ├── components/       GlassCard, LiquidGlassNavigationBar, StatusBadge, ...
-│       ├── icons/            TruckParkIcons (hand-built vector icons)
+│       ├── components/       GlassCard, LiquidGlassNavigationBar, StatusBadge
+│       ├── icons/            TruckParkIcons
 │       └── theme/            Color, Type, Theme
 ├── data/
-│   ├── local/                ThemePreferencesDataSource (DataStore), SessionStore (Android Keystore AES-GCM)
+│   ├── local/                ThemePreferencesDataSource, SessionStore (Keystore AES-GCM), TransporterStore, Room DB (TruckParkDatabase, VisitDaos, VisitEntities)
 │   ├── remote/
 │   │   ├── HttpTransport.kt  HTTPS transport interface + HttpUrlConnectionTransport
-│   │   └── auth/             AuthRemoteDataSource, OrdsAuthRemoteDataSource
-│   └── repositories/         ThemeRepositoryImpl, AuthRepositoryImpl
+│   │   ├── auth/             AuthRemoteDataSource, OrdsAuthRemoteDataSource
+│   │   └── visits/           VisitsRemoteDataSource
+│   └── repositories/         ThemeRepositoryImpl, AuthRepositoryImpl, VisitsRepositoryImpl
 ├── domain/
-│   ├── models/               AuthModels (AuthUser, AuthSession, ManagedUser)
-│   └── repositories/         ThemeRepository, AuthRepository
+│   ├── models/               AuthModels, VisitModels (TruckVisit, CargoItem, VisitSeal, VisitCorrectionRecord, PlateInfo)
+│   └── repositories/         ThemeRepository, AuthRepository, VisitsRepository
 ├── feature/
-│   ├── auth/                 LiquidMetalAuthScreen, AdminSecuritySetupScreen, EmailCodeVerification, AuthViewModel
-│   ├── operations/           OperationsScreen (role-specific workspace cards + Admin Role Management panel)
-│   ├── settings/             MoreOptionsBottomSheet (user profile, role sync, theme picker, Sign Out), ThemeViewModel
-│   └── splash/               HibiscusAnimatedSplashScreen
+│   ├── auth/                 LiquidMetalAuthScreen, AdminSecuritySetupScreen, EmailCodeVerification, CountryDialCode, AuthViewModel
+│   ├── ocr/                  PlateScannerDialog, PlateTextAnalyzer (CameraX Live OCR + Background Photo OCR)
+│   ├── operations/           OperationsScreen (role-specific workspace cards + Admin Staff/Handsets/Overrides Governance)
+│   ├── settings/             MoreOptionsBottomSheet (View/Update Profile with Dual-OTP Email Verification, Theme Picker, Sign Out), ThemeViewModel
+│   ├── splash/               HibiscusAnimatedSplashScreen
+│   └── visits/               VisitsScreen, VisitDetailsAndCargoComponents, VisitsViewModel
 └── navigation/
     ├── TopLevelDestination   Home, Visits, Registers, Reports
-    └── TruckParkAppRoot      Role-filtered NavHost, floating bottom bar, menu sheet, scrim
+    └── TruckParkAppRoot      Role-filtered NavHost, floating bottom bar, menu sheet
 ```
 
 Dependency injection is manual (`AppContainer` in [`TruckParkApplication.kt`](file:///sdcard/project/TruckPark/app/src/main/java/com/truckpark/management/app/TruckParkApplication.kt)). Hilt is not used.

@@ -30,8 +30,8 @@
     <string name="appearance_dark">Dark</string>
     <string name="appearance_dark_detail">Always use the dark appearance</string>
 
-    <string name="about_title">About this build</string>
-    <string name="about_body">Version 0.1.0-m1. Milestone 1 foundation only: navigation and appearance settings. There is no sign-in, no database and no synchronization yet.</string>
+    <string name="about_title">About Hibiscus TruckPark</string>
+    <string name="about_body">Version 1.5.0 (Milestone 5). Enterprise SADC yard &amp; gate operations powered by Oracle Autonomous Database (ORDS), offline-first Room synchronization, CameraX + ML Kit plate/seal OCR (live scan &amp; photo capture), cargo &amp; seal verification, and role-based access control.</string>
 
     <string name="status_label_format">Status: %1$s</string>
 
@@ -79,9 +79,9 @@
     <string name="duration_hours">Hours</string>
     <string name="duration_days">Days</string>
     <string name="duration_permanent_hint">Permanent override · Valid indefinitely until explicitly revoked</string>
-    <string name="hint_override_hours">Enter hours (e.g. 8)</string>
-    <string name="hint_override_days">Enter days (e.g. 7)</string>
-    <string name="hint_override_reason">Explain why this override is needed (e.g. weekend coverage, temporary audit)...</string>
+    <string name="hint_override_hours">Enter hours</string>
+    <string name="hint_override_days">Enter days</string>
+    <string name="hint_override_reason"></string>
     <string name="btn_save_override">Save override</string>
     <string name="btn_revoke_override">Revoke</string>
     <string name="btn_edit_role">Edit role</string>
@@ -151,9 +151,9 @@
     <string name="lbl_driver_phone">Driver Phone (International)</string>
     <string name="hint_driver_phone">Phone number</string>
     <string name="lbl_arrival_notes">Inspection and cargo notes if available</string>
-    <string name="hint_arrival_notes">Cargo description, trailer details, or inspection remarks</string>
+    <string name="hint_arrival_notes"></string>
     <string name="lbl_departure_notes">Inspection and departure notes if available</string>
-    <string name="hint_departure_notes">Departure clearance and inspection remarks</string>
+    <string name="hint_departure_notes"></string>
     <string name="warn_duplicate_open_title">Truck Already On Site</string>
     <string name="warn_duplicate_open_msg">Truck %1$s already has an open visit (#%2$s).</string>
     <string name="lbl_override_duplicate">Supervisor override: allow duplicate open visit</string>

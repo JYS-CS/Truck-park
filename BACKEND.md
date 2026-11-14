@@ -1,6 +1,6 @@
 # Backend Architecture (Oracle ADB + ORDS)
 
-Status: **Phase 1 (Identity, Verification, Email Dispatch & RBAC) Built.** Operations & Sync (§6–§7) are planned for Milestones 3–4.
+Status: **Milestones 1–5 Built (Identity, Verification, Email Dispatch, RBAC, Truck Visits, Cargo/Seals, Corrections & Offline Sync).** Visitors, Incidents, Inspections & Reports are planned for Milestones 6–12.
 
 ## 0. What changed from the earlier draft
 

@@ -1,6 +1,6 @@
-# Backend: Identity, Verification, Email Dispatch & Access Control (Built)
+# Backend: Identity, Verification, Email Dispatch, Visits & Access Control (Built — v1.5.0)
 
-Scope: Sign-in, pre-registration email verification, self-service registration (auto-approved as `RUNNER`), Admin Security Setup gate, password reset, tokens, devices, roles, Admin user/role management, and server-side Brevo email delivery.
+Scope: Sign-in, pre-registration email verification, self-service registration (auto-approved as `RUNNER`), Admin Security Setup gate, self-service Profile & Dual-OTP Email Update, password reset, tokens, devices, roles, Admin user/role/permission-override management, server-side Brevo email delivery, and Milestone 3–5 Truck Visits, Cargo, Seals, Corrections & Sync endpoints.
 Design and rationale live in [IDENTITY_AND_ACCESS.md](file:///sdcard/project/TruckPark/IDENTITY_AND_ACCESS.md) and [BACKEND.md](file:///sdcard/project/TruckPark/BACKEND.md).
 
 ## Layers (each can be tested and replaced on its own)
@@ -57,8 +57,8 @@ Base: `/ords/<schema>/v1/` (e.g. `/ords/admin/v1/`). Errors are always `{ code, 
 | POST | `auth/register` | 201, 400, 409 | Verify 6-digit signup code, create user (`APPROVED`) + password identity + default `RUNNER` role |
 | POST | `auth/accept-invite` | 201, 400, 409 | Accept an Admin invite token |
 | POST | `auth/verify-email` | 200, 400 | Verify 6-digit code for invite-based accounts |
-| POST | `auth/send-verification-code` | 200, 400, 401, 409, 429 | Send 6-digit verification code to target email for Admin Security Setup |
-| POST | `auth/change-password` | 200, 400, 401, 409 | Verify 6-digit code and update Admin email & password |
+| POST | `auth/send-verification-code` | 200, 400, 401, 409, 429 | Send 6-digit verification code to current or new target email for Admin Security Setup / Profile Email Change |
+| POST | `auth/change-password` | 200, 400, 401, 409 | Verify 6-digit code and update user/Admin profile (full name, phone, verified email, and/or password) |
 | POST | `auth/request-password-reset` | 200, 400 | Generate and email 6-digit password reset code (always returns 200 for valid email format) |
 | POST | `auth/reset-password` | 200, 400 | Verify reset code, update password, and revoke all active sessions |
 | POST | `auth/logout` | 200, 401 | Revoke current session token |

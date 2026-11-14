@@ -201,7 +201,52 @@ class AuthViewModel(
             val current = _uiState.value
             val resolvedEmail = email?.trim()?.takeIf { it.isNotEmpty() }
                 ?: (current as? AuthUiState.AdminSecuritySetup)?.user?.email
+                ?: (current as? AuthUiState.Authenticated)?.user?.email
             val result = authRepository.sendVerificationCode(resolvedEmail)
+            onComplete(result)
+        }
+    }
+
+    fun verifyCurrentEmailCode(
+        code: String,
+        onComplete: (AuthResult<Unit>) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val current = _uiState.value
+            val userId = when (current) {
+                is AuthUiState.Authenticated -> current.user.id
+                is AuthUiState.AdminSecuritySetup -> current.user.id
+                else -> ""
+            }
+            val result = authRepository.verifyEmail(userId, code)
+            onComplete(result)
+        }
+    }
+
+    fun updateUserProfile(
+        newEmail: String,
+        fullName: String,
+        phone: String,
+        newPassword: String? = null,
+        code: String? = null,
+        onComplete: (AuthResult<AuthUser>) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val result = authRepository.updateUserProfile(
+                newEmail = newEmail,
+                fullName = fullName,
+                phone = phone,
+                newPassword = newPassword,
+                code = code,
+            )
+            if (result is AuthResult.Success) {
+                val current = _uiState.value
+                if (current is AuthUiState.Authenticated) {
+                    _uiState.value = current.copy(user = result.value)
+                } else if (current is AuthUiState.AdminSecuritySetup) {
+                    _uiState.value = current.copy(user = result.value)
+                }
+            }
             onComplete(result)
         }
     }

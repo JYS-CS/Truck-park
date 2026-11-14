@@ -231,6 +231,8 @@ data class PlateInfo(
     val customPurpose: String? = null,
     val customCountryReason: String? = null,
     val exitVerifiedPlate: String? = null,
+    val arrivedByName: String? = null,
+    val departedByName: String? = null,
     val customFields: List<CustomVisitField> = emptyList(),
 )
 
@@ -357,6 +359,8 @@ fun extractPlateInfo(
         ?: Regex("""Transporter:\s*([^\n|]+)""").find(notes)
     val purposeMatch = Regex("""\[Purpose:\s*([^\]]+)\]""").find(notes)
     val exitPlateMatch = Regex("""\[ExitPlate:\s*([^\]]+)\]""").find(combinedNotes)
+    val arrivedByMatch = Regex("""\[ArrivedBy:\s*([^\]]+)\]""").find(combinedNotes)
+    val departedByMatch = Regex("""\[DepartedBy:\s*([^\]]+)\]""").find(combinedNotes)
 
     val customMatches = Regex("""\[Custom:([^\]]+)\]""").findAll(combinedNotes)
     val customFields = customMatches.mapIndexedNotNull { index, match ->
@@ -399,6 +403,8 @@ fun extractPlateInfo(
     val transporter = transporterMatch?.groupValues?.get(1)?.trim()
     val purpose = purposeMatch?.groupValues?.get(1)?.trim()
     val exitVerifiedPlate = exitPlateMatch?.groupValues?.get(1)?.trim()
+    val arrivedByName = arrivedByMatch?.groupValues?.get(1)?.trim()
+    val departedByName = departedByMatch?.groupValues?.get(1)?.trim()
 
     return PlateInfo(
         country = country,
@@ -408,6 +414,8 @@ fun extractPlateInfo(
         customPurpose = purpose,
         customCountryReason = countryReason,
         exitVerifiedPlate = exitVerifiedPlate,
+        arrivedByName = arrivedByName,
+        departedByName = departedByName,
         customFields = customFields,
     )
 }
@@ -422,6 +430,8 @@ fun cleanDisplayNotes(rawNotes: String?): String? {
         .replace(Regex("""\[Transporter:\s*[^\]]+\]\s*"""), "")
         .replace(Regex("""\[Purpose:\s*[^\]]+\]\s*"""), "")
         .replace(Regex("""\[ExitPlate:\s*[^\]]+\]\s*"""), "")
+        .replace(Regex("""\[ArrivedBy:\s*[^\]]+\]\s*"""), "")
+        .replace(Regex("""\[DepartedBy:\s*[^\]]+\]\s*"""), "")
         .replace(Regex("""\[Custom:[^\]]+\]\s*"""), "")
         .replace(Regex("""Country:\s*[A-Za-z0-9]+\s*\|?\s*"""), "")
         .replace(Regex("""Horse(?:\s*Plate)?:\s*[^\n|]+\s*\|?\s*"""), "")
